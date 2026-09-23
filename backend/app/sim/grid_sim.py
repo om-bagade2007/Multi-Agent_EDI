@@ -17,6 +17,7 @@ class GridSim:
         self.rng = np.random.default_rng(0)
         self.noise: dict[str, float] = {}
         self.vehicles: dict[str, dict[str, object]] = {}
+        self.cleared_corridors: set[str] = set()
         self.graph = nx.grid_2d_graph(size, size)
         for a, b in self.graph.edges:
             key = self.edge_id(a, b)
@@ -35,6 +36,7 @@ class GridSim:
             self.origin = LatLon.model_validate(origin)
         self.noise = {d["id"]: float(rng.uniform(0.85, 1.15)) for *_, d in self.graph.edges(data=True)}
         self.sim_time, self.vehicles = 0.0, {}
+        self.cleared_corridors.clear()
 
     def _coordinate(self, node: tuple[int, int]) -> LatLon:
         """Map grid coordinates to geographic coordinates."""
@@ -62,10 +64,18 @@ class GridSim:
         if start == end:
             return 0.0, 0.0
         for a, b, data in self.graph.edges(data=True):
-            data["weight"] = data["length"] / (13.9 * self._congestion(data) * (1.3 if emergency else 1.0))
+            speed_factor = 1.3 * (1.2 if emergency and self.cleared_corridors else 1.0) if emergency else 1.0
+            data["weight"] = data["length"] / (13.9 * self._congestion(data) * speed_factor)
         path = nx.shortest_path(self.graph, start, end, weight="weight")
         seconds = sum(self.graph.edges[a, b]["weight"] for a, b in itertools.pairwise(path))
         return seconds, (len(path) - 1) * self.block_m
+
+    def set_corridor_cleared(self, unit_id: str, cleared: bool) -> None:
+        """Track police corridor clearance while its unit is en route."""
+        if cleared:
+            self.cleared_corridors.add(unit_id)
+        else:
+            self.cleared_corridors.discard(unit_id)
 
     def dispatch_unit(self, unit_id: str, dest: LatLon, *, emergency: bool) -> None:
         """Start unit movement toward a snapped destination."""
@@ -80,13 +90,22 @@ class GridSim:
             vehicle["elapsed"] = min(float(vehicle["duration"]), float(vehicle["elapsed"]) + dt)
 
     def unit_position(self, unit_id: str) -> LatLon:
-        """Return the current interpolated position, or the grid origin if unknown."""
+        """Return interpolated position along the active Dijkstra path."""
         vehicle = self.vehicles.get(unit_id)
         if vehicle is None:
             return self._coordinate((0, 0))
         ratio = 1.0 if not vehicle["duration"] else min(1.0, float(vehicle["elapsed"]) / float(vehicle["duration"]))
         start, end = vehicle["start"], vehicle["end"]
-        return LatLon(lat=start.lat + (end.lat - start.lat) * ratio, lon=start.lon + (end.lon - start.lon) * ratio)
+        if ratio >= 1.0:
+            return end
+        path = vehicle["path"]
+        if len(path) < 2:
+            return start
+        route_position = ratio * (len(path) - 1)
+        segment = min(len(path) - 2, int(route_position))
+        fraction = route_position - segment
+        a, b = self._coordinate(path[segment]), self._coordinate(path[segment + 1])
+        return LatLon(lat=a.lat + (b.lat - a.lat) * fraction, lon=a.lon + (b.lon - a.lon) * fraction)
 
     def unit_arrived(self, unit_id: str) -> bool:
         """Check if an active vehicle reached its destination."""

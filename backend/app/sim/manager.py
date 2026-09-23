@@ -3,7 +3,9 @@ import asyncio
 
 import numpy as np
 
-from app.core.bus import EventBus
+from app.agents.fire import FireAgent
+from app.agents.registry import AGENTS
+from app.core.bus import EventBus, InMemoryBus
 from app.core.events import Event, make_event
 from app.core.models import (
     AgentKind,
@@ -18,19 +20,20 @@ from app.core.models import (
 from app.metrics.collector import MetricsCollector
 from app.sim.grid_sim import GridSim
 from app.sim.incidents import IncidentGenerator
+from app.strategies.base import DispatchStrategy
 from app.strategies.nearest import NearestStrategy
 
 
 class SimulationManager:
     """Own one seeded simulation, responders, event bus, and metrics."""
-    def __init__(self, seed: int = 1, duration_s: float = 3600, rate_per_minute: float = 2/3, bus: EventBus | None = None) -> None:
+    def __init__(self, seed: int = 1, duration_s: float = 3600, rate_per_minute: float = 2/3, bus: EventBus | None = None, strategy: DispatchStrategy | None = None) -> None:
         self.seed, self.duration_s, self.rate = seed, duration_s, rate_per_minute
-        self.bus = bus
+        self.bus = bus or InMemoryBus()
         self.rng = np.random.default_rng(seed)
         self.sim = GridSim()
         self.sim.reset({}, self.rng)
         self.generator = IncidentGenerator(self.rng, rate_per_minute)
-        self.strategy = NearestStrategy()
+        self.strategy = strategy or NearestStrategy()
         self.units: list[Unit] = []
         self.hospitals = [
             Hospital(id=f"H{i + 1}", location=LatLon(lat=18.518 + i * .009, lon=73.854 + i * .008), beds_total=beds, beds_free=beds, icu_total=icu, icu_free=icu)
@@ -51,14 +54,32 @@ class SimulationManager:
         self.stopped = False
         self._active: dict[str, dict[str, object]] = {}
         self.hospital_rejections = 0
+        self._response_recorded: set[str] = set()
+        self.unit_events: list[dict[str, object]] = []
+        self.metric_snapshots: list[dict[str, object]] = []
+        self.agents = {
+            kind: AGENTS[kind](kind, [unit for unit in self.units if unit.kind == kind], self.bus)
+            for kind in (AgentKind.ambulance, AgentKind.fire, AgentKind.police)
+        }
+        self.hospital_agent = AGENTS[AgentKind.hospital](AgentKind.hospital, [], self.bus)
 
     async def emit(self, event: Event) -> None:
         """Publish an event and drain inline for deterministic runs."""
         if self.bus:
-            await self.bus.publish("sim", event)
+            if event.type.startswith("incident."):
+                stream = "incidents"
+            elif event.type.startswith("hospital."):
+                stream = "hospital"
+            elif event.type == "decision.logged":
+                stream = "agents"
+            elif event.type.startswith("unit.") or event.type == "corridor.cleared":
+                stream = "dispatch"
+            else:
+                stream = "sim"
+            await self.bus.publish(stream, event)
             await self.bus.drain()
 
-    async def run_episode(self, tick_s: float = 5.0, realtime: bool = False) -> dict[str, object]:
+    async def run_episode(self, tick_s: float = 5.0, realtime: bool = False, speed: float = 1.0) -> dict[str, object]:
         """Run until the configured duration, processing arrivals and resources."""
         while self.sim.sim_time < self.duration_s and not self.stopped:
             if self.paused:
@@ -66,7 +87,7 @@ class SimulationManager:
                 continue
             self.sim.step(tick_s)
             if realtime:
-                await asyncio.sleep(.025)
+                await asyncio.sleep(.025 / max(speed, .01))
             for incident in self.generator.due(self.sim.sim_time, self.sim.origin):
                 self.incidents.append(incident)
                 self.metrics.incidents += 1
@@ -77,25 +98,69 @@ class SimulationManager:
             old_status = {unit.id: unit.status for unit in self.units}
             await self._advance_units(tick_s)
             for unit in self.units:
+                if unit.kind == AgentKind.police:
+                    self.sim.set_corridor_cleared(unit.id, unit.status == UnitStatus.en_route)
+                    if old_status[unit.id] == UnitStatus.en_route and unit.status != UnitStatus.en_route:
+                        await self.emit(make_event("corridor.cleared", self.sim.sim_time, "police", unit_id=unit.id, cleared=False))
                 if old_status[unit.id] != unit.status:
+                    unit_event = {"unit_id": unit.id, "status": unit.status.value, "incident_id": unit.assigned_incident_id, "sim_time": self.sim.sim_time}
+                    self.unit_events.append(unit_event)
                     await self.emit(make_event("unit.status_changed", self.sim.sim_time, "manager", unit_id=unit.id, status=unit.status.value, incident_id=unit.assigned_incident_id))
+            if int(self.sim.sim_time) % 30 == 0:
+                self.metric_snapshots.append(self._metric_snapshot())
         self.metrics.queued_end = sum(i.status == IncidentStatus.pending for i in self.incidents)
+        if not self.metric_snapshots or self.metric_snapshots[-1]["sim_time"] != self.sim.sim_time:
+            self.metric_snapshots.append(self._metric_snapshot())
         return self.result()
+
+    def _metric_snapshot(self) -> dict[str, object]:
+        """Capture a persisted 30-second metric record."""
+        return self.dashboard_metrics() | {
+            "sim_time": self.sim.sim_time,
+            "queued": sum(incident.status == IncidentStatus.pending for incident in self.incidents),
+        }
+
+    def dashboard_metrics(self) -> dict[str, object]:
+        """Return rolling response and utilization metrics for dashboard clients."""
+        counts = {"ambulance": 4, "fire": 3, "police": 3}
+        utilization = {
+            kind: self.metrics.busy_time[kind] / max(1, self.sim.sim_time * count)
+            for kind, count in counts.items()
+        }
+        return self.metrics.snapshot(self.sim.sim_time, self.sim.mean_traffic_delay()) | {"utilization": utilization}
+
+    def agent_snapshot(self) -> dict[str, dict[str, object]]:
+        """Return each agent's idle/busy resources and most recent action."""
+        summary: dict[str, dict[str, object]] = {}
+        for kind, agent in self.agents.items():
+            idle = len(agent.idle_units())
+            summary[kind.value] = {"idle": idle, "busy": len(agent.units) - idle, "last_action": agent.last_action}
+        summary[AgentKind.hospital.value] = {
+            "beds_free": sum(hospital.beds_free for hospital in self.hospitals),
+            "icu_free": sum(hospital.icu_free for hospital in self.hospitals),
+            "last_action": self.hospital_agent.last_action,
+        }
+        return summary
 
     async def _dispatch(self, incident: Incident) -> None:
         """Assign nearest idle required responders or queue the incident."""
-        for kind in sorted(incident.requires, key=lambda k: k.value):
-            needed = 2 if kind == AgentKind.fire and incident.severity >= 4 else 1
-            already = sum(1 for unit in self.units if unit.assigned_incident_id == incident.id and unit.kind == kind)
-            for _ in range(max(0, needed - already)):
-                idle = [u for u in self.units if u.kind == kind and u.status == UnitStatus.idle]
-                decision = self.strategy.select_unit(incident, idle, self.sim)
-                if decision is None:
-                    continue
+        dispatch_order = {AgentKind.police: 0, AgentKind.ambulance: 1, AgentKind.fire: 2}
+        for kind in sorted(incident.requires, key=lambda k: dispatch_order[k]):
+            needed = FireAgent.required_units(incident) if kind == AgentKind.fire else 1
+            already = sum(1 for decision in self.decisions if decision.get("incident_id") == incident.id and decision.get("kind") == kind.value)
+            agent = self.agents[kind]
+            selections = agent.select_for_incident(incident, self.sim, self.strategy, max(0, needed - already))
+            for decision in selections:
+                idle = [unit for unit in agent.idle_units() if unit.id == decision.unit_id]
                 unit = next(u for u in idle if u.id == decision.unit_id)
                 unit.status, unit.assigned_incident_id = UnitStatus.en_route, incident.id
+                agent.last_action = decision.chosen_reason
                 self.sim.dispatch_unit(unit.id, incident.location, emergency=True)
-                record = decision.model_dump(mode="json") | {"explanation": f"{kind.value.title()} {decision.chosen_reason}"}
+                await self.emit(make_event("unit.dispatched", self.sim.sim_time, kind.value, unit_id=unit.id, incident_id=incident.id, eta_s=decision.eta_s))
+                if kind == AgentKind.police:
+                    self.sim.set_corridor_cleared(unit.id, True)
+                    await self.emit(make_event("corridor.cleared", self.sim.sim_time, kind.value, unit_id=unit.id, incident_id=incident.id))
+                record = decision.model_dump(mode="json") | {"kind": kind.value, "explanation": f"{kind.value.title()} {decision.chosen_reason}"}
                 self.decisions.append(record)
                 self.metrics.decisions.append(record)
                 await self.emit(make_event("decision.logged", self.sim.sim_time, kind.value, decision=record))
@@ -110,6 +175,7 @@ class SimulationManager:
             if unit.status == UnitStatus.idle or not unit.assigned_incident_id:
                 continue
             if unit.status == UnitStatus.returning:
+                self.metrics.busy_time[unit.kind.value] += dt
                 if self.sim.unit_arrived(unit.id):
                     station = next(s for s in self.stations if s.id == unit.station_id)
                     unit.location, unit.status, unit.assigned_incident_id = station.location, UnitStatus.idle, None
@@ -121,12 +187,13 @@ class SimulationManager:
                 unit.location = self.sim.unit_position(unit.id)
                 if self.sim.unit_arrived(unit.id):
                     unit.status = UnitStatus.on_scene
-                    self._active[unit.id] = {"service": max(30, incident.severity * 45), "response_recorded": False}
+                    self._active[unit.id] = {"service": max(30, incident.severity * 45)}
                     response = max(0, self.sim.sim_time - incident.created_at)
-                    if not self._active[unit.id]["response_recorded"]:
+                    if incident.id not in self._response_recorded:
                         self.metrics.response_times.append(response)
                         self.metrics.by_type[incident.type.value].append(response)
-                        self._active[unit.id]["response_recorded"] = True
+                        self.metrics.by_severity[str(incident.severity)].append(response)
+                        self._response_recorded.add(incident.id)
                     incident.status = IncidentStatus.on_scene
             elif unit.status == UnitStatus.on_scene:
                 remaining = float(self._active[unit.id]["service"]) - dt
@@ -170,29 +237,32 @@ class SimulationManager:
             if (
                 incident.status != IncidentStatus.resolved
                 and all(
-                    any(u.assigned_incident_id == incident.id and u.kind == kind for u in self.units)
-                    is False
+                    sum(1 for decision in self.decisions if decision.get("incident_id") == incident.id and decision.get("kind") == kind.value)
+                    >= (2 if kind == AgentKind.fire and incident.severity >= 4 else 1)
+                    and not any(u.assigned_incident_id == incident.id and u.kind == kind for u in self.units)
                     for kind in incident.requires
                 )
                 and self.sim.sim_time > incident.created_at
                 and any(d["incident_id"] == incident.id for d in self.decisions)
             ):
                 incident.status = IncidentStatus.resolved
+                await self.emit(make_event("incident.resolved", self.sim.sim_time, "manager", incident_id=incident.id))
 
     async def _allocate_hospital(self, incident: Incident) -> Hospital | None:
         """Reserve the nearest hospital with bed and severity-required ICU capacity."""
-        ranked = sorted(self.hospitals, key=lambda hospital: self.sim.travel_time(incident.location, hospital.location, emergency=True)[0])
-        for hospital in ranked:
-            if hospital.beds_free > 0 and (incident.severity < 3 or hospital.icu_free > 0):
-                hospital.beds_free -= 1
-                if incident.severity >= 3:
-                    hospital.icu_free -= 1
-                await self.emit(make_event("hospital.bed_response", self.sim.sim_time, "hospital", incident_id=incident.id, hospital_id=hospital.id, accepted=True, beds_free=hospital.beds_free, icu_free=hospital.icu_free))
-                return hospital
+        await self.emit(make_event("hospital.bed_request", self.sim.sim_time, "ambulance", incident_id=incident.id, severity=incident.severity, requires_icu=incident.severity >= 3))
+        hospital = self.hospital_agent.select_hospital(incident, self.hospitals, self.sim)
+        if hospital is not None:
+            eta_s, _ = self.sim.travel_time(incident.location, hospital.location, emergency=True)
+            explanation = f"{hospital.id} selected: ETA {eta_s / 60:.1f} min, {hospital.beds_free} beds and {hospital.icu_free} ICU beds free."
+            self.hospital_agent.last_action = explanation
+            await self.emit(make_event("hospital.bed_response", self.sim.sim_time, "hospital", incident_id=incident.id, hospital_id=hospital.id, accepted=True, beds_free=hospital.beds_free, icu_free=hospital.icu_free, eta_s=eta_s, explanation=explanation))
+            return hospital
         self.hospital_rejections += 1
+        self.hospital_agent.last_action = "No hospital has the required bed capacity"
         await self.emit(make_event("hospital.bed_response", self.sim.sim_time, "hospital", incident_id=incident.id, accepted=False, reason="No suitable bed available"))
         return None
 
     def result(self) -> dict[str, object]:
         """Return a stable JSON-like run record."""
-        return {"seed": self.seed, "sim_time": self.sim.sim_time, "incidents": [i.model_dump(mode="json") for i in self.incidents], "decisions": self.decisions, "hospitals": [hospital.model_dump(mode="json") for hospital in self.hospitals], "metrics": self.metrics.summary(self.duration_s, self.sim.mean_traffic_delay(), {"ambulance": 4, "fire": 3, "police": 3}) | {"hospital_rejections": self.hospital_rejections}}
+        return {"seed": self.seed, "sim_time": self.sim.sim_time, "incidents": [i.model_dump(mode="json") for i in self.incidents], "decisions": self.decisions, "unit_events": self.unit_events, "metric_snapshots": self.metric_snapshots, "hospitals": [hospital.model_dump(mode="json") for hospital in self.hospitals], "metrics": self.metrics.summary(self.duration_s, self.sim.mean_traffic_delay(), {"ambulance": 4, "fire": 3, "police": 3}) | {"hospital_rejections": self.hospital_rejections}}

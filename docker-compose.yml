@@ -8,6 +8,13 @@ services:
       POSTGRES_USER: urban
       POSTGRES_PASSWORD: urban
     ports: ["5432:5432"]
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U urban -d urban"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   backend:
     build: ./backend
     environment:
@@ -15,7 +22,11 @@ services:
       BUS: redis
       REDIS_URL: redis://redis:6379/0
     ports: ["8000:8000"]
-    depends_on: [redis, db]
+    depends_on:
+      redis:
+        condition: service_started
+      db:
+        condition: service_healthy
   frontend:
     build: ./frontend
     ports: ["5173:5173"]

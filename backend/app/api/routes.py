@@ -6,14 +6,17 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from app.api.schemas import RunRequest
 from app.api.ws import send_snapshot
-from app.core.bus import InMemoryBus
+from app.config import Settings
+from app.core.bus import InMemoryBus, RedisStreamsBus
 from app.db.repository import Repository
 from app.sim.manager import SimulationManager
+from app.strategies.registry import STRATEGIES
 
 router = APIRouter()
 _runs: dict[str, SimulationManager] = {}
 _tasks: dict[str, asyncio.Task[dict[str, object]]] = {}
 _repo = Repository()
+_settings = Settings()
 
 
 @router.get("/scenario")
@@ -31,15 +34,17 @@ def runs() -> list[dict[str, object]]:
 @router.post("/runs")
 async def start_run(request: RunRequest) -> dict[str, str]:
     """Start one live seeded run."""
-    if request.strategy != "nearest":
+    strategy_type = STRATEGIES.get(request.strategy)
+    if strategy_type is None:
         raise HTTPException(400, "Unknown strategy")
     if any(not task.done() for task in _tasks.values()):
         raise HTTPException(409, "A live run is already active")
     run_id = str(uuid4())
-    manager = SimulationManager(request.seed, request.duration_s, request.incident_rate, InMemoryBus())
+    event_bus = RedisStreamsBus(_settings.redis_url) if _settings.bus == "redis" else InMemoryBus()
+    manager = SimulationManager(request.seed, request.duration_s, request.incident_rate, event_bus, strategy_type())
     _runs[run_id] = manager
     async def run() -> dict[str, object]:
-        result = await manager.run_episode(realtime=True)
+        result = await manager.run_episode(realtime=True, speed=request.speed)
         _repo.save(result, run_id)
         return result
     _tasks[run_id] = asyncio.create_task(run())

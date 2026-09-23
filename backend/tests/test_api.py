@@ -17,4 +17,6 @@ def test_api_live_run_controls_and_snapshot() -> None:
         message = socket.receive_json()
         assert message["type"] == "snapshot"
         assert "units" in message and "traffic" in message
+        assert "stations" in message and "hospitals" in message and "agents" in message
+        assert "utilization" in message["metrics"] and "response_by_type" in message["metrics"]
     assert client.post(f"/runs/{run_id}/stop").status_code == 200

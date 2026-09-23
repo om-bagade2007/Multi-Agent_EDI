@@ -7,3 +7,5 @@ dist/
 results/
 .env
 *.db
+*.egg-info/
+frontend/tsconfig.tsbuildinfo

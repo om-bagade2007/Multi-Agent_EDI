@@ -3,7 +3,7 @@ import json
 from uuid import uuid4
 
 from app.db.session import Base, SessionLocal, engine
-from app.db.tables import DispatchRow, IncidentRow, RunRow
+from app.db.tables import DispatchRow, IncidentRow, MetricSnapshotRow, RunRow, UnitEventRow
 
 
 class Repository:
@@ -22,6 +22,13 @@ class Repository:
             for decision in result.get("decisions", []):
                 if isinstance(decision, dict):
                     session.merge(DispatchRow(id=f"{key}:{decision['id']}", run_id=key, incident_id=str(decision["incident_id"]), data_json=json.dumps(decision)))
+            for index, event in enumerate(result.get("unit_events", [])):
+                if isinstance(event, dict):
+                    session.merge(UnitEventRow(id=f"{key}:unit:{index}", run_id=key, data_json=json.dumps(event)))
+            for snapshot in result.get("metric_snapshots", []):
+                if isinstance(snapshot, dict):
+                    sim_time = float(snapshot.get("sim_time", 0))
+                    session.merge(MetricSnapshotRow(id=f"{key}:metric:{sim_time:.0f}", run_id=key, sim_time=sim_time, data_json=json.dumps(snapshot)))
         return key
 
     def list_runs(self) -> list[dict[str, object]]:

@@ -13,7 +13,7 @@ lint:
 	cd backend && python -m ruff check app tests experiments
 	cd frontend && npm run lint
 demo:
-	@echo "Run make backend and make frontend in separate terminals (or use docker compose up)."
+	python scripts/demo.py
 experiment:
 	cd backend && python -m experiments.run_experiment
 up:
