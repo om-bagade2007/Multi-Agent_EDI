@@ -23,3 +23,5 @@ up:
 	docker compose up --build
 down:
 	docker compose down
+pune-data:
+	python scripts/build_pune_network.py

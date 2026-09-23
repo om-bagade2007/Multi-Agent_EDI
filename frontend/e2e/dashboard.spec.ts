@@ -8,6 +8,12 @@ test('map grid fits the dashboard at desktop widths', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Emergency Response Simulation' })).toBeVisible();
   await expect(page.getByLabel('Strategy')).toContainText('Nearest resource');
   await expect(page.locator('.grid-map line')).toHaveCount(112, { timeout: 10000 });
+  expect(await page.locator('.grid-map line').count()).toBeGreaterThan(0);
+  const oversizedMarkers = await page.locator('.map-marker').evaluateAll(items => items.filter(item => {
+    const box = item.getBoundingClientRect();
+    return box.width > 40 || box.height > 40;
+  }).length);
+  expect(oversizedMarkers).toBe(0);
   const overflow775 = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
   expect(overflow775).toBe(true);
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -16,6 +22,8 @@ test('map grid fits the dashboard at desktop widths', async ({ page }) => {
   await expect(page.locator('.grid-map line')).toHaveCount(112, { timeout: 20000 });
   const overflow1280 = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
   expect(overflow1280).toBe(true);
+  await page.keyboard.press('Control+A');
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).not.toContain('Live City Map');
   const screenshotPath = resolve(process.cwd(), '../docs/screenshots/map-fixed.png');
   await mkdir(resolve(screenshotPath, '..'), { recursive: true });
   await page.screenshot({ path: screenshotPath, fullPage: true });

@@ -2,6 +2,7 @@ export type Coord = { lat: number; lon: number };
 export type GridNode = { id: string; x: number; y: number };
 export type GridEdge = { id: string; from_node: string; to_node: string; x1: number; y1: number; x2: number; y2: number; congestion: number };
 export type GridRoadNetwork = { size: number; origin_lat: number; origin_lon: number; block_m: number; nodes: GridNode[]; edges: GridEdge[] };
+export type PuneNetwork = { bbox: { south: number; north: number; west: number; east: number }; roads: { type: 'FeatureCollection'; features: { type: 'Feature'; id: string; properties: { road_class: string }; geometry: { type: 'LineString'; coordinates: [number, number][] } }[] }; pois: { id: string; kind: string; name: string; lat: number; lon: number }[]; attribution: string };
 export type Unit = { id: string; kind: string; location: Coord; status: string; assigned_incident_id: string | null };
 export type Incident = { id: string; type: string; severity: number; location: Coord; created_at: number; status: string };
 export type Decision = { type: 'decision'; incident_id: string; unit_id: string; eta_s: number; explanation: string; candidates?: { unit_id: string; eta_s: number; distance_m: number }[] };
