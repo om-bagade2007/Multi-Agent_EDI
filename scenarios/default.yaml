@@ -1,0 +1,11 @@
+origin: {lat: 18.5204, lon: 73.8567}
+grid_size: 8
+block_m: 250
+incident_rate_per_minute: 0.6666667
+duration_s: 3600
+ambulances: 4
+fire_units: 3
+police_units: 3
+hospitals: 3
+beds: [20, 30, 15]
+icu_beds: [4, 8, 3]

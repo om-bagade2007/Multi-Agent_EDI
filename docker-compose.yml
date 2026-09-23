@@ -1,0 +1,22 @@
+services:
+  redis:
+    image: redis:7-alpine
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: urban
+      POSTGRES_USER: urban
+      POSTGRES_PASSWORD: urban
+    ports: ["5432:5432"]
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://urban:urban@db:5432/urban
+      BUS: redis
+      REDIS_URL: redis://redis:6379/0
+    ports: ["8000:8000"]
+    depends_on: [redis, db]
+  frontend:
+    build: ./frontend
+    ports: ["5173:5173"]
+    depends_on: [backend]
