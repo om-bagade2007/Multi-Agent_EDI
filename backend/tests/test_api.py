@@ -31,6 +31,7 @@ def test_api_live_run_controls_and_snapshot() -> None:
         assert "units" in message and "traffic" in message and "routes" in message
         assert "stations" in message and "hospitals" in message and "agents" in message
         points = [item["location"] for group in (message["units"], message["incidents"], message["stations"], message["hospitals"]) for item in group]
+        points.extend(point for route in message["routes"] for point in route["polyline"])
         assert all(isfinite(point[axis]) for point in points for axis in ("lat", "lon"))
         assert all(18.47 <= point["lat"] <= 18.58 and 73.79 <= point["lon"] <= 73.93 for point in points)
         assert "utilization" in message["metrics"] and "response_by_type" in message["metrics"]

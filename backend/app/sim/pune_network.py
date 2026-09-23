@@ -65,11 +65,15 @@ class PuneNetwork:
         if self.roads.get("type") != "FeatureCollection" or not isinstance(features, list) or len(features) < 1000:
             raise ValueError("Pune roads GeoJSON must be a non-empty FeatureCollection.")
         for feature in features:
+            if not isinstance(feature, dict):
+                raise TypeError("Pune roads contain a malformed feature.")
             geometry = feature.get("geometry", {})
+            if not isinstance(geometry, dict):
+                raise TypeError(f"Pune road feature {feature.get('id')} has invalid line geometry.")
             coordinates = geometry.get("coordinates", [])
             if geometry.get("type") != "LineString" or not isinstance(coordinates, list) or len(coordinates) < 2:
                 raise ValueError(f"Pune road feature {feature.get('id')} has invalid line geometry.")
-            if any(len(point) != 2 or not self.valid(float(point[1]), float(point[0])) for point in coordinates):
+            if any(not isinstance(point, (list, tuple)) or len(point) != 2 or not self.valid(float(point[1]), float(point[0])) for point in coordinates):
                 raise ValueError(f"Pune road feature {feature.get('id')} has invalid coordinates.")
         if roads_path.stat().st_size > 3_000_000:
             raise ValueError("Pune roads GeoJSON exceeds the 3 MB cacheable response limit.")

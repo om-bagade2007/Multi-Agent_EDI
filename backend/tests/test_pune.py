@@ -31,6 +31,18 @@ def test_pune_network_is_strong_and_facilities_are_snapped(network: PuneNetwork)
     assert (DATA / "roads.geojson").stat().st_size < 3_000_000
 
 
+def test_first_unit_route_begins_at_its_registered_station(network: PuneNetwork) -> None:
+    sim = PuneSim(DATA)
+    sim.reset({}, np.random.default_rng(7))
+    start_id = next(iter(network.coordinates))
+    start = LatLon(lat=network.coordinates[start_id][0], lon=network.coordinates[start_id][1])
+    poi = network.data["pois"][0]
+    destination = LatLon(lat=poi["lat"], lon=poi["lon"])
+    sim.register_unit("A1", start)
+    sim.dispatch_unit("A1", destination, emergency=True)
+    assert sim.vehicles["A1"]["start"] == start
+
+
 def test_pune_astar_matches_networkx_dijkstra_on_random_pairs(network: PuneNetwork) -> None:
     sim = PuneSim(DATA)
     sim.reset({}, np.random.default_rng(24))

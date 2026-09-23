@@ -34,7 +34,7 @@ def _pune_network() -> PuneNetwork:
     """Return current Pune network or a descriptive API error."""
     try:
         return _load_pune_network(str(_settings.pune_data_dir.resolve()))
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, OverflowError) as error:
         raise HTTPException(status_code=503, detail=f"Pune network data is unavailable: {error}") from error
 
 

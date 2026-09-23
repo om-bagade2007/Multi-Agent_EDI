@@ -4,7 +4,7 @@ A seeded emergency-response demo on a real OpenStreetMap road network for centra
 
 ## Requirements
 
-- Python 3.11 or newer (3.11–3.13 supported)
+- Python 3.11 or newer
 - Node.js 20 or newer with npm
 - Ports 8000 and 5173 available
 - Internet for installing dependencies and optional CARTO tiles; the committed Pune network runs without downloading OSM again
