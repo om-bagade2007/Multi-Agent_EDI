@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import GridMap from './GridMap';
-import type { Snapshot } from './types';
+import type { Snapshot } from '../types';
 
 function fixture(): Snapshot {
   const nodes = Array.from({ length: 25 }, (_, index) => ({ id: `n_${Math.floor(index / 5)}_${index % 5}`, x: index % 5, y: Math.floor(index / 5) }));

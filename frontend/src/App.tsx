@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import GridMap from './GridMap';
+import PuneMap from './PuneMap';
+import { parseFacilities } from './mapPayload';
 import { assertNoGridTiles } from './lib/mapMode';
 import { useRunSocket } from './hooks/useRunSocket';
-import type { Comparison, Decision, GridRoadNetwork } from './types';
+import type { Comparison, Decision, Facility, GridRoadNetwork, PuneNetwork } from './types';
 
-assertNoGridTiles(import.meta.env.VITE_SIMULATION_MODE ?? 'gridsim', []);
+const GridMap = lazy(() => import('./dev/GridMap'));
+assertNoGridTiles(import.meta.env.VITE_SIMULATION_MODE ?? 'pune', []);
 
 export default function App() {
   const [runId, setRunId] = useState<string | null>(null);
@@ -13,8 +15,14 @@ export default function App() {
   const [rate, setRate] = useState(0.67);
   const [speed, setSpeed] = useState(1);
   const [strategy, setStrategy] = useState('nearest');
+  const [strategies, setStrategies] = useState<string[]>(['nearest', 'hungarian']);
+  const [speedOptions, setSpeedOptions] = useState<number[]>([1, 5, 10, 30]);
+  const [mode, setMode] = useState(import.meta.env.VITE_SIMULATION_MODE ?? 'pune');
+  const [scenarioLoaded, setScenarioLoaded] = useState(false);
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [baseNetwork, setBaseNetwork] = useState<GridRoadNetwork | null>(null);
+  const [puneNetwork, setPuneNetwork] = useState<PuneNetwork | null>(null);
+  const [facilities, setFacilities] = useState<Facility[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Decision | null>(null);
@@ -31,9 +39,45 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => { void fetch('/api/scenario').then(response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }).then(data => { if (data?.dispatch_strategy) setStrategy(data.dispatch_strategy as string); }).catch(() => setError('Simulation API is unavailable. Start the backend server; see the README run instructions.')); }, []);
+  useEffect(() => {
+    void fetch('/api/scenario').then(async response => {
+      if (!response.ok) throw new Error(`Scenario service returned HTTP ${response.status}`);
+      return response.json();
+    }).then(data => {
+      const nextMode = data?.mode === 'gridsim' ? 'gridsim' : 'pune';
+      setMode(nextMode);
+      if (data?.dispatch_strategy) setStrategy(data.dispatch_strategy as string);
+      if (Array.isArray(data?.speeds)) setSpeedOptions(data.speeds as number[]);
+      if (Array.isArray(data?.strategies)) setStrategies(data.strategies as string[]);
+      setScenarioLoaded(true);
+    }).catch(cause => setError(cause instanceof Error ? cause.message : 'Simulation API is unavailable.'));
+  }, []);
 
-  useEffect(() => { void fetch('/api/scenario/network').then(response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }).then(data => setBaseNetwork(data as GridRoadNetwork)).catch(() => { setBaseNetwork(null); setError('Simulation API is unavailable. Start the backend server; see the README run instructions.'); }); }, []);
+  useEffect(() => {
+    if (!scenarioLoaded) return;
+    const loadNetwork = async () => {
+      const networkResponse = await fetch('/api/scenario/network');
+      if (!networkResponse.ok) {
+        const detail = await networkResponse.json().catch(() => ({})) as { detail?: string };
+        throw new Error(detail.detail ?? `Network service returned HTTP ${networkResponse.status}`);
+      }
+      const networkData = await networkResponse.json();
+      if (mode === 'pune') {
+        setPuneNetwork(networkData as PuneNetwork);
+        const facilitiesResponse = await fetch('/api/scenario/facilities');
+        if (!facilitiesResponse.ok) {
+          const detail = await facilitiesResponse.json().catch(() => ({})) as { detail?: string };
+          throw new Error(detail.detail ?? `Facilities service returned HTTP ${facilitiesResponse.status}`);
+        }
+        setFacilities(parseFacilities(await facilitiesResponse.json(), (networkData as PuneNetwork).bbox));
+      } else {
+        setBaseNetwork(networkData as GridRoadNetwork);
+      }
+    };
+    void loadNetwork().catch(cause => setError(cause instanceof Error ? cause.message : 'Pune network is unavailable.'));
+  }, [mode, scenarioLoaded]);
+
+  useEffect(() => { document.title = mode === 'pune' ? 'Pune Emergency Response Simulation' : 'Emergency Response Simulation'; }, [mode]);
 
   async function start() {
     try {
@@ -75,14 +119,14 @@ export default function App() {
 
   return <main>
     <header>
-      <h1>Emergency Response Simulation</h1>
+      <h1>{mode === 'pune' ? 'Pune Emergency Response Simulation' : 'Emergency Response Simulation'}</h1>
       <div className="clock">{Math.floor(clock / 60).toString().padStart(2, '0')}:{Math.floor(clock % 60).toString().padStart(2, '0')}</div>
     </header>
     <nav>
       <label>Seed <input type="number" value={seed} onChange={event => setSeed(Number(event.target.value))} /></label>
       <label>Incidents/min <input type="number" step=".1" value={rate} onChange={event => setRate(Number(event.target.value))} /></label>
-      <label>Speed <select value={speed} onChange={event => setSpeed(Number(event.target.value))}><option value={1}>1×</option><option value={5}>5×</option><option value={20}>20×</option></select></label>
-      <label className="strategy">Strategy <select value={strategy} disabled={busy} onChange={event => setStrategy(event.target.value)}><option value="nearest">Nearest resource</option><option value="hungarian">Hungarian (optimal)</option></select></label>
+      <label>Speed <select value={speed} onChange={event => setSpeed(Number(event.target.value))}>{speedOptions.map(value => <option key={value} value={value}>{value}×</option>)}</select></label>
+      <label className="strategy">Strategy <select value={strategies.includes(strategy) ? strategy : strategies[0] ?? 'nearest'} disabled={busy} onChange={event => setStrategy(event.target.value)}>{strategies.map(value => <option key={value} value={value}>{value === 'hungarian' ? 'Hungarian (optimal)' : 'Nearest resource'}</option>)}</select></label>
       <button onClick={() => void start()}>Start</button>
       <button disabled={!runId} onClick={() => void control('pause')}>Pause</button>
       <button disabled={!runId} onClick={() => void control('resume')}>Resume</button>
@@ -99,8 +143,11 @@ export default function App() {
     </section>
     <section className="grid">
       <article className="map">
-        <h2>Live City Map</h2>
-        <GridMap snapshot={snapshot} baseNetwork={baseNetwork} />
+        <h2>{mode === 'pune' ? 'Pune live map' : 'Live City Map'}</h2>
+        {mode === 'pune'
+          ? puneNetwork ? <PuneMap network={puneNetwork} facilities={facilities} snapshot={snapshot} /> : <p className="map-empty">Loading Pune roads and facilities…</p>
+          : <Suspense fallback={<p className="map-empty">Loading developer map…</p>}><GridMap snapshot={snapshot} baseNetwork={baseNetwork} /></Suspense>}
+        {mode === 'pune' && <><div className="map-legend"><span><i className="legend-square hospital-legend" />Hospital</span><span><i className="legend-square fire-legend" />Fire station</span><span><i className="legend-square police-legend" />Police station</span><span><i className="legend-diamond" />Incident</span><span><i className="legend-dot" />Response unit</span></div><small className="map-attribution">© OpenStreetMap contributors © CARTO</small></>}
       </article>
       <aside>
         <article><h2>Response Agents</h2>{['ambulance', 'fire', 'police'].map(kind => <div className="agent-card" key={kind}><div className="resource"><span>{kind}</span><b>{snapshot?.agents[kind]?.idle ?? units.filter(unit => unit.kind === kind && unit.status === 'idle').length} idle</b><small>{snapshot?.agents[kind]?.busy ?? units.filter(unit => unit.kind === kind && unit.status !== 'idle').length} busy</small></div><p>{snapshot?.agents[kind]?.last_action ?? 'Standing by'}</p></div>)}<div className="agent-card"><div className="resource"><span>hospital</span><b>{snapshot?.agents.hospital?.beds_free ?? 65} beds</b><small>{snapshot?.agents.hospital?.icu_free ?? 15} ICU</small></div><p>{snapshot?.agents.hospital?.last_action ?? 'Standing by'}</p></div></article>

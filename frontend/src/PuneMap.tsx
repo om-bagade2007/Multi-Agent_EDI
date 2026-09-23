@@ -1,70 +1,119 @@
-import { useEffect, useRef } from 'react';
-import maplibregl, { type Map as MapLibreMap, type Marker } from 'maplibre-gl';
+import { useEffect, useRef, useState } from 'react';
+import maplibregl, { type LayerSpecification, type Map as MapLibreMap, type Marker } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import type { Incident, PuneNetwork, Snapshot } from './types';
+import { validPuneCoordinate } from './mapPayload';
+import type { Facility, PuneNetwork, Snapshot } from './types';
 
-type Props = { network: PuneNetwork; snapshot: Snapshot | null };
-const colors: Record<string, string> = { hospital: '#315D5B', fire_station: '#C56A37', police: '#344B68', ambulance: '#315D5B', fire: '#C56A37', police_unit: '#344B68', incident: '#617D98' };
-const initialPosition: [number, number] = [73.8567, 18.5204];
+type Props = { network: PuneNetwork; facilities: Facility[]; snapshot: Snapshot | null };
+type Position = { lon: number; lat: number };
+const colorByKind: Record<string, string> = { hospital: '#315D5B', fire_station: '#C56A37', police: '#344B68', ambulance: '#315D5B', fire: '#C56A37', police_unit: '#344B68', incident: '#617D98' };
 
-function valid(lon: number, lat: number, box: PuneNetwork['bbox']): boolean {
-  return Number.isFinite(lon) && Number.isFinite(lat) && lon !== 0 && lat !== 0 && lon >= box.west && lon <= box.east && lat >= box.south && lat <= box.north;
-}
-
-function markerElement(kind: string, label?: string, status?: string): HTMLDivElement {
+function elementFor(kind: string, label?: string, status?: string): HTMLDivElement {
   const el = document.createElement('div');
-  el.className = `pune-marker ${kind.startsWith('incident') ? 'incident-marker' : kind.includes('station') || kind === 'hospital' ? 'square-marker' : 'unit-marker'} ${status === 'idle' ? 'idle-marker' : ''}`;
-  el.style.backgroundColor = colors[kind] ?? colors.incident;
-  if (label) el.textContent = label;
-  el.setAttribute('aria-label', label ? `${kind} ${label}` : kind);
+  const className = kind === 'incident' ? 'incident-marker' : ['hospital', 'fire_station', 'police'].includes(kind) ? `facility-marker facility-${kind}` : `unit-marker unit-${kind}`;
+  el.className = `pune-marker ${className} ${status === 'idle' ? 'idle' : status ? 'busy' : ''}`;
+  el.style.setProperty('--marker-color', colorByKind[kind] ?? colorByKind.incident);
+  if (label) {
+    const digit = document.createElement('span');
+    digit.textContent = label;
+    el.append(digit);
+  }
+  el.setAttribute('aria-label', label ? `${kind} ${label}` : kind.replace('_', ' '));
   el.setAttribute('draggable', 'false');
   return el;
 }
 
-export default function PuneMap({ network, snapshot }: Props) {
+export default function PuneMap({ network, facilities, snapshot }: Props) {
   const host = useRef<HTMLDivElement>(null);
-  const map = useRef<MapLibreMap | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
   const markers = useRef<Map<string, Marker>>(new Map());
-  useEffect(() => {
-    if (!host.current) return;
-    const useTiles = (import.meta.env.VITE_BASEMAP ?? 'carto-light') === 'carto-light';
-    const instance = new maplibregl.Map({
-      container: host.current,
-      style: { version: 8, sources: useTiles ? { 'carto-light': { type: 'raster', tiles: ['https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap contributors © CARTO' } } : {}, layers: useTiles ? [{ id: 'carto-light', type: 'raster', source: 'carto-light' }] : [] },
-      center: initialPosition, zoom: 11, maxBounds: [[network.bbox.west - .02, network.bbox.south - .02], [network.bbox.east + .02, network.bbox.north + .02]],
-      dragRotate: false, pitchWithRotate: false, attributionControl: false,
-    });
-    instance.addControl(new maplibregl.AttributionControl({ compact: true }));
-    instance.on('load', () => {
-      instance.addSource('pune-roads', { type: 'geojson', data: network.roads });
-      instance.addLayer({ id: 'pune-roads', type: 'line', source: 'pune-roads', paint: { 'line-color': '#ADB6BA', 'line-width': ['match', ['get', 'road_class'], 'motorway', 2.5, 'trunk', 2.2, 'primary', 1.8, 'secondary', 1.4, 1] } });
-      instance.fitBounds([[network.bbox.west, network.bbox.south], [network.bbox.east, network.bbox.north]], { padding: 20, duration: 0 });
-      for (const poi of network.pois) if (valid(poi.lon, poi.lat, network.bbox)) {
-        const marker = new maplibregl.Marker({ element: markerElement(poi.kind) }).setLngLat([poi.lon, poi.lat]).addTo(instance);
-        markers.current.set(`poi:${poi.id}`, marker);
-      }
-    });
-    const observer = new ResizeObserver(() => instance.resize());
-    observer.observe(host.current);
-    map.current = instance;
-    return () => { observer.disconnect(); markers.current.forEach(marker => marker.remove()); markers.current.clear(); instance.remove(); map.current = null; };
-  }, [network]);
+  const animationFrames = useRef<Map<string, number>>(new Map());
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const instance = map.current;
-    if (!instance || !snapshot) return;
-    const next = new Set<string>();
-    const put = (id: string, kind: string, lon: number, lat: number, label?: string, status?: string) => {
-      if (!valid(lon, lat, network.bbox)) return;
-      next.add(id);
-      const existing = markers.current.get(id);
-      if (existing) existing.setLngLat([lon, lat]);
-      else markers.current.set(id, new maplibregl.Marker({ element: markerElement(kind, label, status) }).setLngLat([lon, lat]).addTo(instance));
+    if (!host.current) return;
+    const useTiles = (import.meta.env.VITE_BASEMAP ?? 'none') === 'carto-light';
+    const layers: LayerSpecification[] = [{ id: 'light-background', type: 'background', paint: { 'background-color': '#FAFAF8' } }, ...(useTiles ? [{ id: 'carto-light', type: 'raster' as const, source: 'carto-light' }] : [])];
+    const map = new maplibregl.Map({
+      container: host.current,
+      style: {
+        version: 8,
+        sources: useTiles ? { 'carto-light': { type: 'raster', tiles: ['https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap contributors © CARTO' } } : {},
+        layers,
+      },
+      center: [73.8567, 18.5204], zoom: 11,
+      maxBounds: [[network.bbox.west - .02, network.bbox.south - .02], [network.bbox.east + .02, network.bbox.north + .02]],
+      dragRotate: false, pitchWithRotate: false, attributionControl: false,
+    });
+    map.on('load', () => {
+      map.addSource('pune-roads', { type: 'geojson', data: network.roads });
+      map.addLayer({ id: 'pune-roads', type: 'line', source: 'pune-roads', paint: { 'line-color': '#ADB6BA', 'line-width': ['match', ['get', 'road_class'], 'motorway', 2.5, 'trunk', 2.2, 'primary', 1.8, 'secondary', 1.4, 1] } });
+      host.current?.setAttribute('data-roads-ready', 'true');
+      map.addSource('pune-routes', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({ id: 'pune-routes', type: 'line', source: 'pune-routes', paint: { 'line-color': '#617D98', 'line-width': 2, 'line-opacity': .85 } });
+      map.fitBounds([[network.bbox.west, network.bbox.south], [network.bbox.east, network.bbox.north]], { padding: 20, duration: 0 });
+      for (const facility of facilities) {
+        if (!validPuneCoordinate(facility.lon, facility.lat, network.bbox)) continue;
+        const marker = new maplibregl.Marker({ element: elementFor(facility.kind) }).setLngLat([facility.lon, facility.lat]).addTo(map);
+        markers.current.set(`facility:${facility.id}`, marker);
+      }
+      setLoaded(true);
+    });
+    map.on('error', event => {
+      const sourceId = 'sourceId' in event ? event.sourceId : undefined;
+      if (sourceId !== 'carto-light' || !map.getLayer('carto-light')) return;
+      map.removeLayer('carto-light');
+      if (map.getSource('carto-light')) map.removeSource('carto-light');
+    });
+    const observer = new ResizeObserver(() => map.resize());
+    observer.observe(host.current);
+    mapRef.current = map;
+    return () => {
+      observer.disconnect();
+      animationFrames.current.forEach(frame => cancelAnimationFrame(frame));
+      animationFrames.current.clear();
+      markers.current.forEach(marker => marker.remove());
+      markers.current.clear();
+      map.remove();
+      mapRef.current = null;
     };
-    snapshot.units.forEach(unit => put(`unit:${unit.id}`, unit.kind === 'police' ? 'police_unit' : unit.kind, unit.location.lon, unit.location.lat, undefined, unit.status));
-    snapshot.incidents.filter((incident: Incident) => incident.status !== 'resolved').forEach(incident => put(`incident:${incident.id}`, 'incident', incident.location.lon, incident.location.lat, String(incident.severity)));
-    for (const [id, marker] of markers.current) if (!id.startsWith('poi:') && !next.has(id)) { marker.remove(); markers.current.delete(id); }
-  }, [snapshot, network]);
+  }, [network, facilities]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded || !snapshot) return;
+    const next = new Set<string>();
+    const update = (id: string, kind: string, target: Position, label?: string, status?: string) => {
+      if (!validPuneCoordinate(target.lon, target.lat, network.bbox)) return;
+      next.add(id);
+      let marker = markers.current.get(id);
+      if (!marker) {
+        marker = new maplibregl.Marker({ element: elementFor(kind, label, status) }).setLngLat([target.lon, target.lat]).addTo(map);
+        markers.current.set(id, marker);
+      } else {
+        const element = marker.getElement();
+        element.className = elementFor(kind, label, status).className;
+        element.style.setProperty('--marker-color', colorByKind[kind] ?? colorByKind.incident);
+        if (label && kind === 'incident') element.textContent = label;
+        const oldFrame = animationFrames.current.get(id);
+        if (oldFrame) cancelAnimationFrame(oldFrame);
+        const start = marker.getLngLat();
+        const startedAt = performance.now();
+        const animate = (now: number) => {
+          const progress = Math.min(1, (now - startedAt) / 450);
+          marker!.setLngLat([start.lng + (target.lon - start.lng) * progress, start.lat + (target.lat - start.lat) * progress]);
+          if (progress < 1) animationFrames.current.set(id, requestAnimationFrame(animate));
+          else animationFrames.current.delete(id);
+        };
+        animationFrames.current.set(id, requestAnimationFrame(animate));
+      }
+    };
+    snapshot.units.forEach(unit => update(`unit:${unit.id}`, unit.kind === 'police' ? 'police_unit' : unit.kind, { lon: unit.location.lon, lat: unit.location.lat }, undefined, unit.status));
+    snapshot.incidents.filter(incident => incident.status !== 'resolved').forEach(incident => update(`incident:${incident.id}`, 'incident', { lon: incident.location.lon, lat: incident.location.lat }, String(incident.severity)));
+    for (const [id, marker] of markers.current) if (!id.startsWith('facility:') && !next.has(id)) { marker.remove(); markers.current.delete(id); }
+    const routeSource = map.getSource('pune-routes') as maplibregl.GeoJSONSource | undefined;
+    routeSource?.setData({ type: 'FeatureCollection', features: (snapshot.routes ?? []).filter(route => route.polyline.length > 1 && route.polyline.every(point => validPuneCoordinate(point.lon, point.lat, network.bbox))).map(route => ({ type: 'Feature' as const, properties: { unit_id: route.unit_id }, geometry: { type: 'LineString' as const, coordinates: route.polyline.map(point => [point.lon, point.lat] as [number, number]) } })) });
+  }, [snapshot, network, loaded]);
 
   return <div className="pune-map" ref={host} role="img" aria-label="Pune emergency response map" />;
 }

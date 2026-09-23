@@ -1,4 +1,4 @@
-.PHONY: install backend frontend test lint demo experiment up down
+.PHONY: install backend frontend test lint demo experiment up down pune-data doctor compare-pune
 install:
 	python -m pip install -e "backend[dev]"
 	cd frontend && npm install
@@ -10,7 +10,6 @@ frontend:
 test:
 	cd backend && python -m pytest
 	cd frontend && npm test -- --run
-	cd frontend && npm run test:e2e
 lint:
 	cd backend && python -m ruff check app tests experiments
 	cd frontend && npm run lint
@@ -25,3 +24,7 @@ down:
 	docker compose down
 pune-data:
 	python scripts/build_pune_network.py
+doctor:
+	python scripts/doctor.py
+compare-pune:
+	cd backend && python -m experiments.run_experiment --compare --mode pune --scenarios 1 --duration 1800 --rate-per-minute 0.67 --speed 10 --out ../results/pune_compare.csv

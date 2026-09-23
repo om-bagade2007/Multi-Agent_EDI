@@ -1,6 +1,10 @@
 FROM node:22-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY . .
-CMD ["npm","run","dev"]
+ARG VITE_SIMULATION_MODE=pune
+ARG VITE_BASEMAP=none
+ENV VITE_SIMULATION_MODE=$VITE_SIMULATION_MODE
+ENV VITE_BASEMAP=$VITE_BASEMAP
+CMD ["npm","run","dev","--","--host","0.0.0.0"]

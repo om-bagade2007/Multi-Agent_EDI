@@ -4,7 +4,13 @@ __pycache__/
 .ruff_cache/
 node_modules/
 dist/
-results/
+results/*
+!results/pune_compare.csv
+!results/pune_compare.md
+!results/latest_comparison.json
+data/pune/cache/*
+!data/pune/cache/
+!data/pune/cache/pune_drive.graphml.gz
 .env
 *.db
 *.egg-info/

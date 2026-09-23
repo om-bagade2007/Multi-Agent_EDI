@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from functools import lru_cache
 from itertools import pairwise
 from time import perf_counter
 
@@ -43,6 +42,7 @@ class PuneRouteService:
         points = [(lon * math.cos(math.radians(lat)), lat) for lat, lon in self.network.coordinates.values()]
         self.tree = cKDTree(points)
         self.max_speed_mps = max(float(edge["speed_kph"]) for edge in self.network.data["edges"]) / 3.6
+        self._path_cache: dict[tuple[str, str, int, bool, bool], tuple[tuple[str, ...], float]] = {}
 
     def nearest_node(self, point: LatLon) -> str:
         """Snap a live coordinate to its nearest road intersection."""
@@ -87,9 +87,11 @@ class PuneRouteService:
                 turns += 1
         return PuneRouteResult(path, [LatLon(lat=float(lat), lon=float(lon)) for lon, lat in polyline], distance, eta, turns, (perf_counter() - started) * 1000)
 
-    @lru_cache(maxsize=30_000)
     def _cached_path(self, start: str, goal: str, bucket: int, emergency: bool, corridor: bool) -> tuple[tuple[str, ...], float]:
         """Cache deterministic route paths per endpoints and traffic hour."""
+        key = (start, goal, bucket, emergency, corridor)
+        if key in self._path_cache:
+            return self._path_cache[key]
         emergency_factor = 1.3 * (1.2 if emergency and corridor else 1.0) if emergency else 1.0
         def neighbors(node: str):
             for adjacent in self.network.neighbors(node):
@@ -100,8 +102,12 @@ class PuneRouteService:
             p2 = self.network.coordinates[b]
             return haversine_m(LatLon(lat=p1[0], lon=p1[1]), LatLon(lat=p2[0], lon=p2[1])) / (self.max_speed_mps * emergency_factor)
         path, eta = astar(start, goal, neighbors, heuristic)
-        return tuple(path), eta
+        result = (tuple(path), eta)
+        if len(self._path_cache) >= 30_000:
+            self._path_cache.pop(next(iter(self._path_cache)))
+        self._path_cache[key] = result
+        return result
 
     def clear_cache(self) -> None:
         """Drop paths when a fresh seed changes edge traffic noise."""
-        self._cached_path.cache_clear()
+        self._path_cache.clear()

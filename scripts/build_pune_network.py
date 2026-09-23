@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import json
 import math
+import argparse
+import gzip
 from pathlib import Path
+import sys
+import shutil
 
 import networkx as nx
 import osmnx as ox
@@ -57,7 +61,7 @@ def graph_from_osm(bbox: tuple[float, float, float, float]) -> nx.MultiDiGraph:
             return graph
         except (requests.RequestException, Exception) as error:
             failures.append(f"{endpoint}: {error}")
-    cached = cache / "pune_drive.graphml"
+    cached = cache / "pune_drive.graphml.gz"
     if cached.exists():
         print(f"Overpass endpoints failed; using cached extract {cached}")
         return ox.load_graphml(cached)
@@ -65,9 +69,28 @@ def graph_from_osm(bbox: tuple[float, float, float, float]) -> nx.MultiDiGraph:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--force", action="store_true", help="rebuild from OSM even when committed network outputs validate")
+    args = parser.parse_args()
+    fixture_path = ROOT / "backend" / "tests" / "fixtures" / "pune_mini.json"
+    if not args.force and (DATA_DIR / "network.json").exists() and (DATA_DIR / "roads.geojson").exists() and fixture_path.exists():
+        sys.path.insert(0, str(ROOT / "backend"))
+        try:
+            from app.sim.pune_network import PuneNetwork
+            verified = PuneNetwork(DATA_DIR)
+            print(f"Using committed Pune OSM data: {verified.graph.number_of_nodes()} nodes, {verified.graph.number_of_edges()} directed edges, {len(verified.data['pois'])} facilities.")
+            return
+        except (ImportError, OSError, ValueError, KeyError, TypeError) as error:
+            print(f"Existing Pune outputs are incomplete or invalid; rebuilding: {error}")
     south, north, west, east = BBOX
     bbox = (west, south, east, north)
     graph = graph_from_osm(bbox)
+    raw_cache = DATA_DIR / "cache" / "pune_drive.graphml"
+    compact_cache = DATA_DIR / "cache" / "pune_drive.graphml.gz"
+    if raw_cache.exists():
+        with raw_cache.open("rb") as source, gzip.open(compact_cache, "wb", compresslevel=9) as target:
+            shutil.copyfileobj(source, target)
+        raw_cache.unlink()
     graph = ox.project_graph(graph, to_crs="EPSG:4326")
     for node, data in list(graph.nodes(data=True)):
         if not (south <= data["y"] <= north and west <= data["x"] <= east):
@@ -147,13 +170,23 @@ def main() -> None:
     (out / "network.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     features = [{"type": "Feature", "id": edge["id"], "properties": {"road_class": edge["road_class"]}, "geometry": {"type": "LineString", "coordinates": edge["geometry"]}} for edge in edges]
     (out / "roads.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": features}, separators=(",", ":")), encoding="utf-8")
-    mini_nodes = list(graph.nodes)[:50]
+    undirected = graph.to_undirected()
+    mini_nodes = []
+    queue = [next(iter(graph.nodes))]
+    seen = set(queue)
+    while queue and len(mini_nodes) < 50:
+        node = queue.pop(0)
+        mini_nodes.append(node)
+        for adjacent in undirected.neighbors(node):
+            if adjacent not in seen:
+                seen.add(adjacent)
+                queue.append(adjacent)
     mini_graph = graph.subgraph(mini_nodes).copy()
     if not nx.is_strongly_connected(mini_graph):
         component = max(nx.strongly_connected_components(mini_graph), key=len)
         mini_graph = graph.subgraph(component).copy()
     mini_ids = {str(n) for n in mini_graph.nodes}
-    mini = {**data, "nodes": [n for n in nodes if n["id"] in mini_ids], "edges": [e for e in edges if e["from"] in mini_ids and e["to"] in mini_ids]}
+    mini = {**data, "nodes": [n for n in nodes if n["id"] in mini_ids], "edges": [e for e in edges if e["from"] in mini_ids and e["to"] in mini_ids], "pois": [poi for poi in pois if poi["node"] in mini_ids]}
     fixture = ROOT / "backend" / "tests" / "fixtures" / "pune_mini.json"
     fixture.parent.mkdir(parents=True, exist_ok=True)
     fixture.write_text(json.dumps(mini, separators=(",", ":")), encoding="utf-8")

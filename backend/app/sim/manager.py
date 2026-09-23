@@ -5,6 +5,7 @@ import numpy as np
 
 from app.agents.fire import FireAgent
 from app.agents.registry import AGENTS
+from app.config import Settings
 from app.core.bus import EventBus, InMemoryBus
 from app.core.events import Event, make_event
 from app.core.models import (
@@ -17,11 +18,10 @@ from app.core.models import (
     Unit,
     UnitStatus,
 )
-from app.config import Settings
 from app.metrics.collector import MetricsCollector
 from app.sim.grid_sim import GridSim
-from app.sim.pune_sim import PuneSim
 from app.sim.incidents import IncidentGenerator
+from app.sim.pune_sim import PuneSim
 from app.strategies.base import DispatchStrategy
 from app.strategies.nearest import NearestStrategy
 
@@ -56,6 +56,8 @@ class SimulationManager:
                 loc = LatLon(lat=poi["lat"], lon=poi["lon"]) if poi else LatLon(lat=18.5204 + (index % 2) * .005, lon=73.8567 + (index // 2) * .006)
                 unit_loc = self.sim._coordinate(self.sim._node(loc)) if simulation_mode == "pune" else loc
                 self.units.append(Unit(id=f"{prefix}{index + 1}", kind=kind, station_id=station_id, location=unit_loc))
+                if simulation_mode == "pune":
+                    self.sim.register_unit(f"{prefix}{index + 1}", unit_loc)
                 if not any(s.id == station_id for s in self.stations):
                     self.stations.append(Station(id=station_id, kind=kind, location=loc))
         self.incidents: list[Incident] = []

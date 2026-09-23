@@ -1,0 +1,23 @@
+{
+  "scenarios": 1,
+  "seeds": [
+    1
+  ],
+  "improvement_pct": 16.022,
+  "strategies": {
+    "nearest": {
+      "avg_response_s": 507.335,
+      "ambulance_util": 0.965,
+      "fire_util": 0.921,
+      "police_util": 0.963,
+      "mean_traffic_delay_s": 0.433
+    },
+    "hungarian": {
+      "avg_response_s": 426.052,
+      "ambulance_util": 0.965,
+      "fire_util": 0.921,
+      "police_util": 0.963,
+      "mean_traffic_delay_s": 0.433
+    }
+  }
+}

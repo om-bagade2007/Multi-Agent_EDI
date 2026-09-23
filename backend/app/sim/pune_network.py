@@ -58,8 +58,21 @@ class PuneNetwork:
                 raise ValueError(f"Facility {poi.get('id')} is invalid or unsnapped.")
             if float(poi["snap_distance_m"]) > 300:
                 raise ValueError(f"Facility {poi.get('id')} is more than 300 m from the graph.")
-        if not self.roads.get("type") == "FeatureCollection" or not isinstance(self.roads.get("features"), list):
-            raise ValueError("Pune roads GeoJSON must be a FeatureCollection.")
+        counts = {kind: sum(poi.get("kind") == kind for poi in pois) for kind in ("hospital", "fire_station", "police")}
+        if counts["hospital"] < 3 or counts["fire_station"] < 2 or counts["police"] < 3:
+            raise ValueError(f"Pune facility minimums are not met: {counts}.")
+        features = self.roads.get("features")
+        if self.roads.get("type") != "FeatureCollection" or not isinstance(features, list) or len(features) < 1000:
+            raise ValueError("Pune roads GeoJSON must be a non-empty FeatureCollection.")
+        for feature in features:
+            geometry = feature.get("geometry", {})
+            coordinates = geometry.get("coordinates", [])
+            if geometry.get("type") != "LineString" or not isinstance(coordinates, list) or len(coordinates) < 2:
+                raise ValueError(f"Pune road feature {feature.get('id')} has invalid line geometry.")
+            if any(len(point) != 2 or not self.valid(float(point[1]), float(point[0])) for point in coordinates):
+                raise ValueError(f"Pune road feature {feature.get('id')} has invalid coordinates.")
+        if roads_path.stat().st_size > 3_000_000:
+            raise ValueError("Pune roads GeoJSON exceeds the 3 MB cacheable response limit.")
 
     @staticmethod
     def valid(lat: float, lon: float) -> bool:

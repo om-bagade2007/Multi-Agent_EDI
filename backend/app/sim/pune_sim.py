@@ -1,6 +1,7 @@
 """Live movement and seeded traffic on the real Pune road network."""
 from __future__ import annotations
 
+from itertools import pairwise
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,7 @@ class PuneSim:
         self.rng = np.random.default_rng(0)
         self.edge_noise: dict[str, float] = {}
         self.vehicles: dict[str, dict[str, Any]] = {}
+        self.unit_positions: dict[str, LatLon] = {}
         self.cleared_corridors: set[str] = set()
         self._hospitals: list[Any] = []
         self.routes = PuneRouteService(self)
@@ -29,7 +31,7 @@ class PuneSim:
     def reset(self, scenario: dict[str, object], rng: np.random.Generator) -> None:
         """Reset hour, vehicles, and deterministic per-edge variation."""
         del scenario
-        self.rng, self.sim_time, self.vehicles = rng, 0.0, {}
+        self.rng, self.sim_time, self.vehicles, self.unit_positions = rng, 0.0, {}, {}
         self.edge_noise = {str(data["id"]): float(rng.uniform(.96, 1.04)) for _, _, _, data in self.graph.edges(keys=True, data=True)}
         self.cleared_corridors.clear()
         self.routes.clear_cache()
@@ -42,6 +44,10 @@ class PuneSim:
         """Return a graph node's WGS84 coordinate."""
         lat, lon = self.network.coordinates[node]
         return LatLon(lat=lat, lon=lon)
+
+    def register_unit(self, unit_id: str, location: LatLon) -> None:
+        """Register a responder's snapped initial position before its first dispatch."""
+        self.unit_positions[unit_id] = location
 
     def sample_location(self, rng: np.random.Generator) -> LatLon:
         """Sample hotspots 60% of the time and uniform graph nodes otherwise."""
@@ -89,7 +95,7 @@ class PuneSim:
     @staticmethod
     def _point_on_leg(points: list[list[float]], fraction: float) -> LatLon:
         """Interpolate by route distance over the OSM edge geometry."""
-        lengths = [haversine_m(LatLon(lat=float(a[1]), lon=float(a[0])), LatLon(lat=float(b[1]), lon=float(b[0]))) for a, b in zip(points, points[1:])]
+        lengths = [haversine_m(LatLon(lat=float(a[1]), lon=float(a[0])), LatLon(lat=float(b[1]), lon=float(b[0]))) for a, b in pairwise(points)]
         total = sum(lengths)
         target = fraction * total
         for index, length in enumerate(lengths):
@@ -104,7 +110,7 @@ class PuneSim:
         """Return the current position interpolated along the real road polyline."""
         vehicle = self.vehicles.get(unit_id)
         if vehicle is None:
-            return self._coordinate(next(iter(self.network.coordinates)))
+            return self.unit_positions.get(unit_id, self._coordinate(next(iter(self.network.coordinates))))
         elapsed = float(vehicle["elapsed"])
         if elapsed >= float(vehicle["duration"]):
             return vehicle["end"]

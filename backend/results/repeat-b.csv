@@ -1,0 +1,2 @@
+strategy,seed,incidents,avg_response_s,p95_response_s,ambulance_util,fire_util,police_util,mean_traffic_delay_s,queued_end
+nearest,12,39,232.96437371477342,893.7306159348627,0.8767361111111112,0.6606481481481481,0.6180555555555556,5.117560801895314,1

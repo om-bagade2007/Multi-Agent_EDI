@@ -1,5 +1,5 @@
 """FastAPI application entry point."""
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import _pune_network, _settings, router
@@ -18,7 +18,7 @@ def create_app() -> FastAPI:
             try:
                 network = _pune_network()
                 return {"status": "ok", "mode": "pune", "nodes": str(network.graph.number_of_nodes()), "edges": str(network.graph.number_of_edges())}
-            except Exception as error:
+            except HTTPException as error:
                 return {"status": "error", "detail": str(getattr(error, "detail", error))}
         return {"status": "ok"}
 

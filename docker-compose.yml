@@ -16,8 +16,12 @@ services:
       timeout: 5s
       retries: 10
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
+      SIMULATION_MODE: pune
+      PUNE_DATA_DIR: /app/data/pune
       DATABASE_URL: postgresql+psycopg://urban:urban@db:5432/urban
       BUS: redis
       REDIS_URL: redis://redis:6379/0
@@ -29,5 +33,9 @@ services:
         condition: service_healthy
   frontend:
     build: ./frontend
+    environment:
+      VITE_SIMULATION_MODE: pune
+      VITE_BASEMAP: none
+      API_PROXY_TARGET: http://backend:8000
     ports: ["5173:5173"]
     depends_on: [backend]

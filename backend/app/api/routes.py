@@ -42,7 +42,7 @@ def _pune_network() -> PuneNetwork:
 def scenario() -> dict[str, object]:
     """Return default scenario metadata."""
     mode = _settings.simulation_mode.lower()
-    return {"name": "Pune" if mode == "pune" else "GridSim", "title": "Pune Emergency Response Simulation" if mode == "pune" else "Emergency Response Simulation", "mode": mode, "bbox": BBOX if mode == "pune" else None, "speeds": [1, 5, 10, 30], "dispatch_strategy": _settings.dispatch_strategy, "incident_rate_per_minute": 2/3, "duration_s": 3600}
+    return {"name": "Pune" if mode == "pune" else "GridSim", "title": "Pune Emergency Response Simulation" if mode == "pune" else "Emergency Response Simulation", "mode": mode, "bbox": BBOX if mode == "pune" else None, "speeds": [1, 5, 10, 30], "strategies": sorted(STRATEGIES), "dispatch_strategy": _settings.dispatch_strategy, "incident_rate_per_minute": 2/3, "duration_s": 3600}
 
 
 @router.get("/scenario/network")
@@ -54,7 +54,7 @@ def scenario_network() -> dict[str, object]:
         if roads_path.stat().st_size > 3_000_000:
             raise HTTPException(status_code=503, detail="Pune roads GeoJSON exceeds the 3 MB API limit; rebuild with simplified geometry.")
         return {"mode": "pune", "bbox": network.data["bbox"], "roads": network.roads}
-    return GridSim().road_network_snapshot().model_dump(mode="json")
+    return {"mode": "gridsim", **GridSim().road_network_snapshot().model_dump(mode="json")}
 
 
 @router.get("/scenario/facilities")
@@ -69,7 +69,7 @@ def scenario_facilities() -> list[dict[str, object]]:
 @router.get("/experiments/latest")
 def latest_comparison() -> dict[str, object] | None:
     """Return the latest paired comparison, if one was exported."""
-    path = Path(__file__).resolve().parents[2] / "experiments" / "results" / "latest_comparison.json"
+    path = Path(__file__).resolve().parents[3] / "results" / "latest_comparison.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 

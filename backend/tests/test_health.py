@@ -4,4 +4,7 @@ from app.main import app
 
 
 def test_health() -> None:
-    assert TestClient(app).get("/health").json() == {"status": "ok"}
+    health = TestClient(app).get("/health").json()
+    assert health["status"] == "ok"
+    assert health["mode"] == "pune"
+    assert int(health["nodes"]) >= 1500

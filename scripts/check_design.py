@@ -7,7 +7,9 @@ import colorsys
 ROOT = Path(__file__).resolve().parents[1]
 css = (ROOT / 'frontend/src/style.css').read_text(encoding='utf-8')
 source_files = [path for path in (list((ROOT / 'frontend/src').rglob('*.ts')) + list((ROOT / 'frontend/src').rglob('*.tsx'))) if not path.name.endswith(('.test.ts', '.spec.ts'))]
-source = '\n'.join(path.read_text(encoding='utf-8') for path in source_files)
+source = '\n'.join(path.read_text(encoding='utf-8') for path in source_files if path.name != 'PuneMap.tsx' and 'dev' not in path.relative_to(ROOT / 'frontend/src').parts)
+grid_source = '\n'.join(path.read_text(encoding='utf-8') for path in source_files if 'dev' in path.relative_to(ROOT / 'frontend/src').parts)
+pune_map = (ROOT / 'frontend/src/PuneMap.tsx').read_text(encoding='utf-8')
 errors: list[str] = []
 
 def luminance(hex_color: str) -> float:
@@ -33,6 +35,10 @@ if re.search(r'react-map-gl|maplibre-gl|leaflet|<Marker\b|L\.marker|marker-icon'
     errors.append('default map-library markers or tile map imports are forbidden in GridSim')
 if 'assertNoGridTiles' not in source or 'GridSim cannot use basemap tiles' not in (ROOT / 'frontend/src/lib/mapMode.ts').read_text(encoding='utf-8'):
     errors.append('GridSim startup tile-source guard is missing')
+if "from 'maplibre-gl'" not in pune_map or 'https://basemaps.cartocdn.com/light_all/' not in pune_map:
+    errors.append('Pune map must use MapLibre and the contracted CARTO light tiles')
+if re.search(r'https?://[^\s"\']+\.(?:png|jpg|jpeg|webp)(?:\?[^"\']*)?', grid_source, re.I) or re.search(r'maplibre-gl|leaflet|cartocdn', grid_source, re.I):
+    errors.append('GridSim developer map must not use tiles or map libraries')
 if errors:
     print('\n'.join(errors), file=sys.stderr)
     raise SystemExit(1)

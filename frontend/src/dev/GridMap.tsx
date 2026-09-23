@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Coord, GridEdge, GridNode, GridRoadNetwork, Snapshot } from './types';
+import type { Coord, GridEdge, GridNode, GridRoadNetwork, Snapshot } from '../types';
 
 type Props = { snapshot: Snapshot | null; baseNetwork?: GridRoadNetwork | null };
 type Point = { x: number; y: number };
