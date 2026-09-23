@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import type { Coord, GridEdge, GridNode, GridRoadNetwork, Snapshot } from './types';
 
 type Props = { snapshot: Snapshot | null; baseNetwork?: GridRoadNetwork | null };
 type Point = { x: number; y: number };
 const invalidLogged = new Set<string>();
-const paddingPx = 24;
-const fallbackViewport = { width: 1000, height: 650 };
+const VIEW = 1000;
+const paddingPx = 60;
 
 function reportInvalid(id: string, reason: string) {
   if (invalidLogged.has(id)) return;
@@ -39,20 +39,7 @@ function shapePath(point: Point, radius: number): string {
 }
 
 export default function GridMap({ snapshot, baseNetwork = null }: Props) {
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const network = snapshot?.road_network ?? baseNetwork;
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(entries => {
-      const { width, height } = entries[0].contentRect;
-      setViewport(current => current.width === width && current.height === height ? current : { width, height });
-    });
-    observer.observe(canvas);
-    return () => observer.disconnect();
-  }, []);
 
   const valid = useMemo(() => {
     if (!network) {
@@ -80,8 +67,8 @@ export default function GridMap({ snapshot, baseNetwork = null }: Props) {
     minX: Math.min(...valid.nodes.map(node => node.x)), maxX: Math.max(...valid.nodes.map(node => node.x)),
     minY: Math.min(...valid.nodes.map(node => node.y)), maxY: Math.max(...valid.nodes.map(node => node.y)),
   } : { minX: 0, maxX: 1, minY: 0, maxY: 1 };
-  const width = viewport.width > 0 ? viewport.width : fallbackViewport.width;
-  const height = viewport.height > 0 ? viewport.height : fallbackViewport.height;
+  const width = VIEW;
+  const height = VIEW;
   const spanX = Math.max(1, bounds.maxX - bounds.minX);
   const spanY = Math.max(1, bounds.maxY - bounds.minY);
   const scale = Math.min((width - 2 * paddingPx) / spanX, (height - 2 * paddingPx) / spanY);
@@ -95,24 +82,24 @@ export default function GridMap({ snapshot, baseNetwork = null }: Props) {
     const point = network ? gridPosition(coord, network, id) : null;
     return point ? project(point) : null;
   };
-  const roadWidth = 1.5;
-  const nodeRadius = 2;
-  const markerHalf = 8;
+  const roadWidth = 3;
+  const nodeRadius = 4;
+  const markerHalf = 14;
 
-  return <div className="map-canvas" ref={canvasRef}>
+  return <div className="map-canvas">
     {!network && <p className="map-empty">Loading GridSim road network…</p>}
     <div className="grid-map" role="img" aria-label="GridSim road network">
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+    <svg viewBox={`0 0 ${VIEW} ${VIEW}`} preserveAspectRatio="xMidYMid meet" width="100%" height="100%" aria-hidden="true">
       <rect x="0" y="0" width={width} height={height} fill="var(--surface)" />
       {valid.edges.map(edge => { const a = project({ x: edge.x1, y: edge.y1 }); const b = project({ x: edge.x2, y: edge.y2 }); return <line key={edge.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--road)" strokeWidth={roadWidth} />; })}
-      {valid.nodes.map(node => { const point = project(node); return <circle key={node.id} cx={point.x} cy={point.y} r={nodeRadius} fill="var(--surface)" stroke="var(--road-node)" strokeWidth={1} />; })}
+      {valid.nodes.map(node => { const point = project(node); return <circle key={node.id} cx={point.x} cy={point.y} r={nodeRadius} fill="var(--surface)" stroke="var(--road-node)" strokeWidth={2} />; })}
       {snapshot?.stations.map(station => {
         const point = locationPoint(station.location, station.id);
         return point && <rect key={station.id} className="map-marker" x={point.x - markerHalf} y={point.y - markerHalf} width={markerHalf * 2} height={markerHalf * 2} fill="var(--accent)" />;
       })}
       {snapshot?.hospitals.map(hospital => {
         const point = locationPoint(hospital.location, hospital.id);
-        return point && <rect key={hospital.id} className="map-marker" x={point.x - markerHalf} y={point.y - markerHalf} width={markerHalf * 2} height={markerHalf * 2} fill="var(--surface)" stroke="var(--accent)" strokeWidth={2} />;
+        return point && <rect key={hospital.id} className="map-marker" x={point.x - markerHalf} y={point.y - markerHalf} width={markerHalf * 2} height={markerHalf * 2} fill="var(--surface)" stroke="var(--accent)" strokeWidth={3} />;
       })}
       {snapshot?.units.map(unit => {
         const point = locationPoint(unit.location, unit.id);
@@ -120,7 +107,7 @@ export default function GridMap({ snapshot, baseNetwork = null }: Props) {
       })}
       {snapshot?.incidents.filter(incident => incident.status !== 'resolved').map(incident => {
         const point = locationPoint(incident.location, incident.id);
-        return point && <g key={incident.id} className="map-marker"><path d={shapePath(point, markerHalf)} fill="var(--text)" /><text x={point.x} y={point.y + markerHalf * .3} textAnchor="middle" className="map-label">{incident.severity}</text></g>;
+        return point && <g key={incident.id} className="map-marker"><path d={shapePath(point, markerHalf)} fill="var(--text)" /><text x={point.x} y={point.y + 6} textAnchor="middle" className="map-label">{incident.severity}</text></g>;
       })}
     </svg></div>
   </div>;

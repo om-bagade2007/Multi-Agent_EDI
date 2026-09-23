@@ -11,9 +11,9 @@ class HospitalAgent(ResponderAgent):
         """Reserve the nearest hospital with a bed and any required ICU bed."""
         ranked = sorted(hospitals, key=lambda hospital: sim.travel_time(incident.location, hospital.location, emergency=True)[0])
         for hospital in ranked:
-            if hospital.beds_free > 0 and (incident.severity < 3 or hospital.icu_free > 0):
+            if hospital.beds_free > 0 and (incident.severity < 4 or hospital.icu_free > 0):
                 hospital.beds_free -= 1
-                if incident.severity >= 3:
+                if incident.severity >= 4:
                     hospital.icu_free -= 1
                 return hospital
         return None

@@ -18,22 +18,34 @@ function fixture(): Snapshot {
 }
 
 describe('GridMap road geometry', () => {
-  it('renders every 5x5 grid segment from its explicit endpoints', () => {
+  it('renders every 5x5 grid segment inside a fixed 1000-unit viewBox', () => {
     const html = renderToStaticMarkup(<GridMap snapshot={fixture()} />);
+    expect(html).toContain('viewBox="0 0 1000 1000"');
     const lines = [...html.matchAll(/<line\b([^>]*)>/g)].map(match => match[1]);
     expect(lines).toHaveLength(40);
+    const lengths = new Set<string>();
     const starts = new Set<string>();
     for (const attributes of lines) {
-      const x1 = Number(attributes.match(/\bx1="([^"]+)"/)?.[1]);
-      const y1 = Number(attributes.match(/\by1="([^"]+)"/)?.[1]);
-      const x2 = Number(attributes.match(/\bx2="([^"]+)"/)?.[1]);
-      const y2 = Number(attributes.match(/\by2="([^"]+)"/)?.[1]);
-      expect([x1, y1, x2, y2].every(Number.isFinite)).toBe(true);
-      expect(Math.abs(x2 - x1) + Math.abs(y2 - y1)).toBe(1);
+      const [x1, y1, x2, y2] = ['x1', 'y1', 'x2', 'y2'].map(key => Number(attributes.match(new RegExp(`\\b${key}="([^"]+)"`))?.[1]));
+      expect([x1, y1, x2, y2].every(value => Number.isFinite(value) && value >= 0 && value <= 1000)).toBe(true);
+      expect(x1 === x2 || y1 === y2).toBe(true);
+      lengths.add((Math.abs(x2 - x1) + Math.abs(y2 - y1)).toFixed(1));
       starts.add(`${x1},${y1}`);
     }
-    expect(starts.size).toBeGreaterThan(1);
-    expect(starts.has('0,0')).toBe(true); // This fixture really contains node n_0_0.
+    expect(lengths.size).toBe(1);
+    expect(starts.size).toBeGreaterThan(10);
+  });
+
+  it('keeps unit marker radii within 20 logical units', () => {
+    const snapshot = fixture();
+    snapshot.units = [{ id: 'unit-1', kind: 'ambulance', location: { lat: 18.52, lon: 73.85 }, status: 'idle', assigned_incident_id: null }];
+    snapshot.incidents = [{ id: 'incident-1', type: 'medical', severity: 3, location: { lat: 18.52, lon: 73.85 }, created_at: 0, status: 'pending' }];
+    const html = renderToStaticMarkup(<GridMap snapshot={snapshot} />);
+    const circles = [...html.matchAll(/<circle\b([^>]*)>/g)].map(match => match[1]).filter(attributes => attributes.includes('class="map-marker"'));
+    expect(circles).toHaveLength(1);
+    const radius = Number(circles[0].match(/\br="([^"]+)"/)?.[1]);
+    expect(Number.isFinite(radius)).toBe(true);
+    expect(radius).toBeLessThanOrEqual(20);
   });
 
   it('skips malformed roads and reports their id only once', () => {

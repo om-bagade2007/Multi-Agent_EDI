@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import router
+from app.api.routes import _pune_network, _settings, router
 
 
 def create_app() -> FastAPI:
@@ -14,6 +14,12 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         """Return process health."""
+        if _settings.simulation_mode.lower() == "pune":
+            try:
+                network = _pune_network()
+                return {"status": "ok", "mode": "pune", "nodes": str(network.graph.number_of_nodes()), "edges": str(network.graph.number_of_edges())}
+            except Exception as error:
+                return {"status": "error", "detail": str(getattr(error, "detail", error))}
         return {"status": "ok"}
 
     return app

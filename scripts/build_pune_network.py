@@ -2,15 +2,19 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import networkx as nx
 import osmnx as ox
+import requests
 
 BBOX = (18.47, 18.58, 73.79, 73.93)  # south, north, west, east
 CLASSES = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary", "secondary_link", "tertiary", "tertiary_link"}
 DEFAULT_SPEED = {"motorway": 80, "trunk": 60, "primary": 40, "secondary": 30, "tertiary": 25}
 ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data" / "pune"
+MIRRORS = ("https://overpass-api.de/api", "https://overpass.kumi.systems/api", "https://overpass.private.coffee/api")
 
 
 def speed_for(tags: object, road_class: str) -> float:
@@ -26,11 +30,44 @@ def speed_for(tags: object, road_class: str) -> float:
     return float(DEFAULT_SPEED.get(base, 25))
 
 
+def distance_m(lon_a: float, lat_a: float, lon_b: float, lat_b: float) -> float:
+    """Return haversine distance without optional scikit-learn dependencies."""
+    radius = 6_371_000
+    lat1, lat2 = math.radians(lat_a), math.radians(lat_b)
+    dlat, dlon = lat2 - lat1, math.radians(lon_b - lon_a)
+    arc = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    return 2 * radius * math.asin(math.sqrt(arc))
+
+
+def graph_from_osm(bbox: tuple[float, float, float, float]) -> nx.MultiDiGraph:
+    """Try the primary Overpass endpoint and mirrors, then an OSMnx extract cache."""
+    cache = DATA_DIR / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    ox.settings.cache_folder = str(cache)
+    ox.settings.use_cache = True
+    ox.settings.overpass_rate_limit = False
+    ox.settings.requests_timeout = 45
+    failures = []
+    for endpoint in MIRRORS:
+        try:
+            ox.settings.overpass_url = endpoint
+            graph = ox.graph_from_bbox(bbox, network_type="drive", simplify=True, retain_all=True)
+            graph_path = cache / "pune_drive.graphml"
+            ox.save_graphml(graph, filepath=graph_path)
+            return graph
+        except (requests.RequestException, Exception) as error:
+            failures.append(f"{endpoint}: {error}")
+    cached = cache / "pune_drive.graphml"
+    if cached.exists():
+        print(f"Overpass endpoints failed; using cached extract {cached}")
+        return ox.load_graphml(cached)
+    raise RuntimeError("Could not download the Pune OSM road network and no cached extract exists. " + " | ".join(failures))
+
+
 def main() -> None:
     south, north, west, east = BBOX
-    tags = {"amenity": ["hospital", "fire_station", "police"]}
     bbox = (west, south, east, north)
-    graph = ox.graph_from_bbox(bbox, network_type="drive", simplify=True, retain_all=True)
+    graph = graph_from_osm(bbox)
     graph = ox.project_graph(graph, to_crs="EPSG:4326")
     for node, data in list(graph.nodes(data=True)):
         if not (south <= data["y"] <= north and west <= data["x"] <= east):
@@ -61,7 +98,18 @@ def main() -> None:
     pois = []
     found = {"hospital": [], "fire_station": [], "police": []}
     for amenity in found:
-        features = ox.features_from_bbox(bbox, tags={"amenity": amenity})
+        features = None
+        errors = []
+        for endpoint in MIRRORS:
+            try:
+                ox.settings.overpass_url = endpoint
+                features = ox.features_from_bbox(bbox, tags={"amenity": amenity})
+                break
+            except Exception as error:
+                errors.append(str(error))
+        if features is None:
+            print(f"OSM facility query unavailable for {amenity}; will add disclosed simulation facilities only if below minimum. {' | '.join(errors)}")
+            continue
         for osm_id, row in features.iterrows():
             geom = row.geometry
             point = geom if geom.geom_type == "Point" else geom.representative_point()
@@ -75,14 +123,26 @@ def main() -> None:
         else:
             items.sort(key=lambda item: (not bool(item[0]), item[0].lower()))
         for name, osm_id, lat, lon in items[:limits[kind]]:
-            node, distance = ox.distance.nearest_nodes(graph, lon, lat, return_dist=True)
+            node, distance = min(((node, distance_m(lon, lat, attrs["x"], attrs["y"])) for node, attrs in graph.nodes(data=True)), key=lambda result: result[1])
             if distance > 300:
                 continue
             pois.append({"id": f"{kind}:{osm_id}", "kind": kind, "name": name or f"Unnamed {kind.replace('_', ' ')}", "lat": lat, "lon": lon, "node": str(node), "snap_distance_m": float(distance)})
+    for kind, minimum in {"hospital": 3, "fire_station": 2, "police": 3}.items():
+        synthetic = {
+            "hospital": [("Synthetic Sassoon General", 18.5289, 73.8744), ("Synthetic KEM Hospital", 18.5039, 73.8602), ("Synthetic Jehangir Hospital", 18.5297, 73.8750)],
+            "fire_station": [("Synthetic Shivajinagar Fire Station", 18.5308, 73.8475), ("Synthetic Hadapsar Fire Station", 18.5018, 73.9270)],
+            "police": [("Synthetic Shivajinagar Police Station", 18.5314, 73.8478), ("Synthetic Deccan Police Station", 18.5158, 73.8412), ("Synthetic Swargate Police Station", 18.5018, 73.8636)],
+        }[kind]
+        existing = sum(poi["kind"] == kind for poi in pois)
+        for index, (name, lat, lon) in enumerate(synthetic[:max(0, minimum - existing)]):
+            node, snap_distance = min(((node, distance_m(lon, lat, attrs["x"], attrs["y"])) for node, attrs in graph.nodes(data=True)), key=lambda result: result[1])
+            if snap_distance <= 300:
+                pois.append({"id": f"synthetic:{kind}:{index + 1}", "kind": kind, "name": name, "lat": lat, "lon": lon, "node": str(node), "snap_distance_m": snap_distance, "synthetic": True})
+                print(f"Added disclosed synthetic facility at Pune landmark: {name} (snap {snap_distance:.0f} m)")
     print("POIs:", {kind: sum(p["kind"] == kind for p in pois) for kind in found})
 
     data = {"bbox": {"south": south, "north": north, "west": west, "east": east}, "nodes": nodes, "edges": edges, "pois": pois, "attribution": "© OpenStreetMap contributors"}
-    out = ROOT / "data" / "pune"
+    out = DATA_DIR
     out.mkdir(parents=True, exist_ok=True)
     (out / "network.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     features = [{"type": "Feature", "id": edge["id"], "properties": {"road_class": edge["road_class"]}, "geometry": {"type": "LineString", "coordinates": edge["geometry"]}} for edge in edges]

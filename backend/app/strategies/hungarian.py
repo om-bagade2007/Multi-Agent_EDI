@@ -23,7 +23,7 @@ class HungarianStrategy:
                 route = sim.routes.route(unit.location, incident.location, emergency=True)
                 routes[row, col] = route
                 factor = 1.0
-                if unit.kind.value == 'ambulance' and incident.severity >= 3:
+                if unit.kind.value == 'ambulance' and incident.severity >= 4:
                     free_icu = sum(h.icu_free for h in getattr(sim, '_hospitals', []))
                     factor += 0.5 if free_icu == 0 else 0.0
                 if unit.kind.value == 'police' and getattr(sim, 'cleared_corridors', set()):

@@ -17,8 +17,10 @@ from app.core.models import (
     Unit,
     UnitStatus,
 )
+from app.config import Settings
 from app.metrics.collector import MetricsCollector
 from app.sim.grid_sim import GridSim
+from app.sim.pune_sim import PuneSim
 from app.sim.incidents import IncidentGenerator
 from app.strategies.base import DispatchStrategy
 from app.strategies.nearest import NearestStrategy
@@ -26,26 +28,34 @@ from app.strategies.nearest import NearestStrategy
 
 class SimulationManager:
     """Own one seeded simulation, responders, event bus, and metrics."""
-    def __init__(self, seed: int = 1, duration_s: float = 3600, rate_per_minute: float = 2/3, bus: EventBus | None = None, strategy: DispatchStrategy | None = None) -> None:
+    def __init__(self, seed: int = 1, duration_s: float = 3600, rate_per_minute: float = 2/3, bus: EventBus | None = None, strategy: DispatchStrategy | None = None, simulation_mode: str = "gridsim", data_dir=None) -> None:
         self.seed, self.duration_s, self.rate = seed, duration_s, rate_per_minute
         self.bus = bus or InMemoryBus()
         self.rng = np.random.default_rng(seed)
-        self.sim = GridSim()
+        if simulation_mode not in {"pune", "gridsim"}:
+            raise ValueError("SIMULATION_MODE must be pune or gridsim")
+        self.simulation_mode = simulation_mode
+        self.sim = PuneSim(data_dir or Settings().pune_data_dir) if simulation_mode == "pune" else GridSim()
         self.sim.reset({}, self.rng)
-        self.generator = IncidentGenerator(self.rng, rate_per_minute)
+        self.generator = IncidentGenerator(self.rng, rate_per_minute, network=self.sim if simulation_mode == "pune" else None)
         self.strategy = strategy or NearestStrategy()
         self.units: list[Unit] = []
-        self.hospitals = [
-            Hospital(id=f"H{i + 1}", location=LatLon(lat=18.518 + i * .009, lon=73.854 + i * .008), beds_total=beds, beds_free=beds, icu_total=icu, icu_free=icu)
-            for i, (beds, icu) in enumerate([(20, 4), (30, 8), (15, 3)])
-        ]
+        if simulation_mode == "pune":
+            self.hospitals = [Hospital(id=poi["id"], name=poi["name"], location=LatLon(lat=poi["lat"], lon=poi["lon"]), beds_total=15, beds_free=15, icu_total=4, icu_free=4) for poi in self.sim.data["pois"] if poi["kind"] == "hospital"]
+        else:
+            self.hospitals = [Hospital(id=f"H{i + 1}", location=LatLon(lat=18.518 + i * .009, lon=73.854 + i * .008), beds_total=beds, beds_free=beds, icu_total=icu, icu_free=icu) for i, (beds, icu) in enumerate([(20, 4), (30, 8), (15, 3)])]
         self.sim._hospitals = self.hospitals
         self.stations: list[Station] = []
+        pune_pois = self.sim.data["pois"] if simulation_mode == "pune" else []
         for kind, count, prefix in [(AgentKind.ambulance, 4, "A"), (AgentKind.fire, 3, "F"), (AgentKind.police, 3, "P")]:
+            poi_kind = {AgentKind.ambulance: "hospital", AgentKind.fire: "fire_station", AgentKind.police: "police"}[kind]
+            locations = [poi for poi in pune_pois if poi["kind"] == poi_kind]
             for index in range(count):
-                station_id = f"{prefix}S{index % 2 + 1}"
-                loc = LatLon(lat=18.5204 + (index % 2) * .005, lon=73.8567 + (index // 2) * .006)
-                self.units.append(Unit(id=f"{prefix}{index + 1}", kind=kind, station_id=station_id, location=loc))
+                poi = locations[index % len(locations)] if locations else None
+                station_id = poi["id"] if poi else f"{prefix}S{index % 2 + 1}"
+                loc = LatLon(lat=poi["lat"], lon=poi["lon"]) if poi else LatLon(lat=18.5204 + (index % 2) * .005, lon=73.8567 + (index // 2) * .006)
+                unit_loc = self.sim._coordinate(self.sim._node(loc)) if simulation_mode == "pune" else loc
+                self.units.append(Unit(id=f"{prefix}{index + 1}", kind=kind, station_id=station_id, location=unit_loc))
                 if not any(s.id == station_id for s in self.stations):
                     self.stations.append(Station(id=station_id, kind=kind, location=loc))
         self.incidents: list[Incident] = []
@@ -89,7 +99,7 @@ class SimulationManager:
             self.sim.step(tick_s)
             if realtime:
                 await asyncio.sleep(.025 / max(speed, .01))
-            for incident in self.generator.due(self.sim.sim_time, self.sim.origin):
+            for incident in self.generator.due(self.sim.sim_time, self.sim.origin, self.sim if self.simulation_mode == "pune" else None):
                 self.incidents.append(incident)
                 self.metrics.incidents += 1
                 await self.emit(make_event("incident.created", self.sim.sim_time, "generator", incident=incident.model_dump(mode="json")))
@@ -122,7 +132,7 @@ class SimulationManager:
 
     def dashboard_metrics(self) -> dict[str, object]:
         """Return rolling response and utilization metrics for dashboard clients."""
-        counts = {"ambulance": 4, "fire": 3, "police": 3}
+        counts = self.resource_counts()
         utilization = {
             kind: self.metrics.busy_time[kind] / max(1, self.sim.sim_time * count)
             for kind, count in counts.items()
@@ -141,6 +151,10 @@ class SimulationManager:
             "last_action": self.hospital_agent.last_action,
         }
         return summary
+
+    def resource_counts(self) -> dict[str, int]:
+        """Return responder counts for utilization denominators."""
+        return {kind.value: sum(unit.kind == kind for unit in self.units) for kind in (AgentKind.ambulance, AgentKind.fire, AgentKind.police)}
 
     async def _dispatch_pending_batch(self, incidents: list[Incident]) -> None:
         """Optimize assignments jointly across all incidents pending this tick."""
@@ -195,6 +209,7 @@ class SimulationManager:
                 continue
             if unit.status == UnitStatus.returning:
                 self.metrics.busy_time[unit.kind.value] += dt
+                unit.location = self.sim.unit_position(unit.id)
                 if self.sim.unit_arrived(unit.id):
                     station = next(s for s in self.stations if s.id == unit.station_id)
                     unit.location, unit.status, unit.assigned_incident_id = station.location, UnitStatus.idle, None
@@ -246,7 +261,7 @@ class SimulationManager:
                     hospital_id = str(self._active[unit.id].get("hospital_id", ""))
                     hospital = next(h for h in self.hospitals if h.id == hospital_id)
                     hospital.beds_free = min(hospital.beds_total, hospital.beds_free + 1)
-                    if incident.severity >= 3:
+                    if incident.severity >= 4:
                         hospital.icu_free = min(hospital.icu_total, hospital.icu_free + 1)
                     unit.status = UnitStatus.returning
                     unit.assigned_incident_id = f"return:{unit.station_id}"
@@ -269,7 +284,7 @@ class SimulationManager:
 
     async def _allocate_hospital(self, incident: Incident) -> Hospital | None:
         """Reserve the nearest hospital with bed and severity-required ICU capacity."""
-        await self.emit(make_event("hospital.bed_request", self.sim.sim_time, "ambulance", incident_id=incident.id, severity=incident.severity, requires_icu=incident.severity >= 3))
+        await self.emit(make_event("hospital.bed_request", self.sim.sim_time, "ambulance", incident_id=incident.id, severity=incident.severity, requires_icu=incident.severity >= 4))
         hospital = self.hospital_agent.select_hospital(incident, self.hospitals, self.sim)
         if hospital is not None:
             eta_s, _ = self.sim.travel_time(incident.location, hospital.location, emergency=True)
@@ -284,4 +299,4 @@ class SimulationManager:
 
     def result(self) -> dict[str, object]:
         """Return a stable JSON-like run record."""
-        return {"seed": self.seed, "sim_time": self.sim.sim_time, "incidents": [i.model_dump(mode="json") for i in self.incidents], "decisions": self.decisions, "unit_events": self.unit_events, "metric_snapshots": self.metric_snapshots, "hospitals": [hospital.model_dump(mode="json") for hospital in self.hospitals], "metrics": self.metrics.summary(self.duration_s, self.sim.mean_traffic_delay(), {"ambulance": 4, "fire": 3, "police": 3}) | {"hospital_rejections": self.hospital_rejections}}
+        return {"seed": self.seed, "sim_time": self.sim.sim_time, "incidents": [i.model_dump(mode="json") for i in self.incidents], "decisions": self.decisions, "unit_events": self.unit_events, "metric_snapshots": self.metric_snapshots, "hospitals": [hospital.model_dump(mode="json") for hospital in self.hospitals], "metrics": self.metrics.summary(self.duration_s, self.sim.mean_traffic_delay(), self.resource_counts()) | {"hospital_rejections": self.hospital_rejections}}

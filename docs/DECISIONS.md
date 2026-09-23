@@ -37,3 +37,9 @@
 
 - The initial blank map had two causes: the dashboard only received a road network in the active-run WebSocket, and `GridMap` returned empty geometry whenever its simulation snapshot was null—even if the static road network had loaded. A new `/scenario/network` endpoint supplies the default grid on page load, and the renderer now uses that network until a live snapshot replaces it.
 - MapLibre is not used for the default GridSim view because it models a synthetic grid, not real geographic streets. A real-city basemap should only be enabled with a real, aligned SUMO/OSM network.
+
+## Fixed GridMap Scaling and Layout
+
+- Root cause of the giant map markers: the SVG `viewBox` depended on a `ResizeObserver` measurement that could initially be zero or very small. That made marker radii and labels appear greatly enlarged. The page also lacked a doctype, so browsers could use quirks mode; the square aspect ratio and 70vh maximum height kept the map card narrow inside its wider grid column. Vite's React plugin was configured as `react` rather than invoked as `react()`.
+- Decision: use a fixed 1000-by-1000 logical SVG coordinate space, fit grid bounds into it with 60 units of padding, and size roads, nodes, markers, and labels in that same space. Keep the map classes used by end-to-end checks and disable text selection inside the map.
+- Layout decision: let the map card fill its grid column, give the map canvas the remaining card height, and preserve the SVG aspect ratio within that canvas. The document uses standards mode through an explicit HTML doctype.

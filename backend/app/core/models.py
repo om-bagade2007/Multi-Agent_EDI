@@ -39,8 +39,8 @@ class UnitStatus(StrEnum):
 
 class LatLon(BaseModel):
     """Geographic coordinate in decimal degrees."""
-    lat: float
-    lon: float
+    lat: float = Field(allow_inf_nan=False)
+    lon: float = Field(allow_inf_nan=False)
 
 
 class Incident(BaseModel):
@@ -75,6 +75,7 @@ class Station(BaseModel):
 class Hospital(BaseModel):
     """Hospital bed and intensive care capacity."""
     id: str
+    name: str | None = None
     location: LatLon
     beds_total: int
     beds_free: int

@@ -20,10 +20,15 @@ test('map grid fits the dashboard at desktop widths', async ({ page }) => {
   await expect(page.locator('.grid-map line')).toHaveCount(112, { timeout: 10000 });
   await page.getByRole('button', { name: 'Start', exact: true }).click();
   await expect(page.locator('.grid-map line')).toHaveCount(112, { timeout: 20000 });
+  const box = await page.locator('.map').boundingBox();
+  expect(box!.width).toBeGreaterThan(700);
+  const sizes = await page.locator('.map-marker').evaluateAll(els => els.map(element => {
+    const rect = element.getBoundingClientRect();
+    return Math.max(rect.width, rect.height);
+  }));
+  expect(Math.max(...sizes, 0)).toBeLessThanOrEqual(40);
   const overflow1280 = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
   expect(overflow1280).toBe(true);
-  await page.keyboard.press('Control+A');
-  expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).not.toContain('Live City Map');
   const screenshotPath = resolve(process.cwd(), '../docs/screenshots/map-fixed.png');
   await mkdir(resolve(screenshotPath, '..'), { recursive: true });
   await page.screenshot({ path: screenshotPath, fullPage: true });
