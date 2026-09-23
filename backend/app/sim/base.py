@@ -1,0 +1,25 @@
+"""Simulation backend protocol and traffic edge value object."""
+from typing import Protocol
+
+from pydantic import BaseModel
+
+from app.core.models import LatLon
+
+
+class EdgeState(BaseModel):
+    """A road segment visualization snapshot."""
+    id: str
+    geometry: list[LatLon]
+    congestion: float
+
+
+class SimBackend(Protocol):
+    """Interface for interchangeable deterministic and SUMO simulators."""
+    sim_time: float
+    def step(self, dt: float = 1.0) -> None: ...
+    def travel_time(self, origin: LatLon, dest: LatLon, *, emergency: bool) -> tuple[float, float]: ...
+    def dispatch_unit(self, unit_id: str, dest: LatLon, *, emergency: bool) -> None: ...
+    def unit_position(self, unit_id: str) -> LatLon: ...
+    def unit_arrived(self, unit_id: str) -> bool: ...
+    def traffic_snapshot(self) -> list[EdgeState]: ...
+    def mean_traffic_delay(self) -> float: ...
