@@ -39,6 +39,7 @@ class SimulationManager:
             Hospital(id=f"H{i + 1}", location=LatLon(lat=18.518 + i * .009, lon=73.854 + i * .008), beds_total=beds, beds_free=beds, icu_total=icu, icu_free=icu)
             for i, (beds, icu) in enumerate([(20, 4), (30, 8), (15, 3)])
         ]
+        self.sim._hospitals = self.hospitals
         self.stations: list[Station] = []
         for kind, count, prefix in [(AgentKind.ambulance, 4, "A"), (AgentKind.fire, 3, "F"), (AgentKind.police, 3, "P")]:
             for index in range(count):
@@ -92,9 +93,8 @@ class SimulationManager:
                 self.incidents.append(incident)
                 self.metrics.incidents += 1
                 await self.emit(make_event("incident.created", self.sim.sim_time, "generator", incident=incident.model_dump(mode="json")))
-                await self._dispatch(incident)
-            for incident in sorted((i for i in self.incidents if i.status == IncidentStatus.pending), key=lambda i: (-i.severity, i.created_at)):
-                await self._dispatch(incident)
+            pending = sorted((i for i in self.incidents if i.status == IncidentStatus.pending), key=lambda i: (-i.severity, i.created_at))
+            await self._dispatch_pending_batch(pending)
             old_status = {unit.id: unit.status for unit in self.units}
             await self._advance_units(tick_s)
             for unit in self.units:
@@ -142,14 +142,33 @@ class SimulationManager:
         }
         return summary
 
-    async def _dispatch(self, incident: Incident) -> None:
+    async def _dispatch_pending_batch(self, incidents: list[Incident]) -> None:
+        """Optimize assignments jointly across all incidents pending this tick."""
+        selections: dict[str, dict[AgentKind, list[object]]] = {i.id: {} for i in incidents}
+        order = {AgentKind.police: 0, AgentKind.ambulance: 1, AgentKind.fire: 2}
+        for kind in sorted(self.agents, key=lambda k: order[k]):
+            demands: list[Incident] = []
+            for incident in incidents:
+                if kind not in incident.requires:
+                    continue
+                need = FireAgent.required_units(incident) if kind == AgentKind.fire else 1
+                already = sum(1 for d in self.decisions if d.get('incident_id') == incident.id and d.get('kind') == kind.value)
+                demands.extend([incident] * max(0, need - already))
+            agent = self.agents[kind]
+            selected = self.strategy.select_batch(demands, agent.idle_units(), self.sim)
+            for decision in selected:
+                selections[decision.incident_id].setdefault(kind, []).append(decision)
+        for incident in incidents:
+            await self._dispatch(incident, selections.get(incident.id, {}))
+
+    async def _dispatch(self, incident: Incident, batch: dict[AgentKind, list[object]] | None = None) -> None:
         """Assign nearest idle required responders or queue the incident."""
         dispatch_order = {AgentKind.police: 0, AgentKind.ambulance: 1, AgentKind.fire: 2}
         for kind in sorted(incident.requires, key=lambda k: dispatch_order[k]):
             needed = FireAgent.required_units(incident) if kind == AgentKind.fire else 1
             already = sum(1 for decision in self.decisions if decision.get("incident_id") == incident.id and decision.get("kind") == kind.value)
             agent = self.agents[kind]
-            selections = agent.select_for_incident(incident, self.sim, self.strategy, max(0, needed - already))
+            selections = batch.get(kind, []) if batch is not None else agent.select_for_incident(incident, self.sim, self.strategy, max(0, needed - already))
             for decision in selections:
                 idle = [unit for unit in agent.idle_units() if unit.id == decision.unit_id]
                 unit = next(u for u in idle if u.id == decision.unit_id)

@@ -9,3 +9,5 @@ results/
 *.db
 *.egg-info/
 frontend/tsconfig.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/

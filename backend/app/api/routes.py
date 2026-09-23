@@ -1,5 +1,7 @@
 """REST endpoints and live WebSocket run stream."""
 import asyncio
+import json
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -22,7 +24,14 @@ _settings = Settings()
 @router.get("/scenario")
 def scenario() -> dict[str, object]:
     """Return default scenario metadata."""
-    return {"name": "Pune grid", "grid_size": 8, "incident_rate_per_minute": 2/3, "duration_s": 3600}
+    return {"name": "Pune grid", "grid_size": 8, "mode": "gridsim", "dispatch_strategy": _settings.dispatch_strategy, "incident_rate_per_minute": 2/3, "duration_s": 3600}
+
+
+@router.get("/experiments/latest")
+def latest_comparison() -> dict[str, object] | None:
+    """Return the latest paired comparison, if one was exported."""
+    path = Path(__file__).resolve().parents[2] / "experiments" / "results" / "latest_comparison.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
 @router.get("/runs")
@@ -34,7 +43,7 @@ def runs() -> list[dict[str, object]]:
 @router.post("/runs")
 async def start_run(request: RunRequest) -> dict[str, str]:
     """Start one live seeded run."""
-    strategy_type = STRATEGIES.get(request.strategy)
+    strategy_type = STRATEGIES.get(request.strategy or _settings.dispatch_strategy)
     if strategy_type is None:
         raise HTTPException(400, "Unknown strategy")
     if any(not task.done() for task in _tasks.values()):

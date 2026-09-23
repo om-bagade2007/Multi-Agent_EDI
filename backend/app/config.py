@@ -10,3 +10,4 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./urban_sim.db"
     redis_url: str = "redis://localhost:6379/0"
     sumo_home: str = ""
+    dispatch_strategy: str = "nearest"

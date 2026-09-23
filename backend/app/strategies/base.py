@@ -9,6 +9,7 @@ class DispatchStrategy(Protocol):
     """Select a resource; future A* and Hungarian strategies plug in here."""
     name: str
     def select_unit(self, incident: Incident, idle_units: list[Unit], sim: SimBackend) -> DispatchDecision | None: ...
+    def select_batch(self, demands: list[Incident], idle_units: list[Unit], sim: SimBackend) -> list[DispatchDecision]: ...
 
 
 class HospitalSelector(Protocol):

@@ -1,12 +1,13 @@
 """Pure Python deterministic grid routing and movement."""
-import itertools
 import math
 
 import networkx as nx
 import numpy as np
 
 from app.core.models import LatLon
+from app.routing.service import RouteService
 from app.sim.base import EdgeState
+from app.sim.road_network import GridEdge, GridNode, GridRoadNetwork
 
 
 class GridSim:
@@ -22,6 +23,7 @@ class GridSim:
         for a, b in self.graph.edges:
             key = self.edge_id(a, b)
             self.graph.edges[a, b].update(id=key, length=block_m)
+        self.routes = RouteService(self)
 
     @staticmethod
     def edge_id(a: tuple[int, int], b: tuple[int, int]) -> str:
@@ -59,16 +61,9 @@ class GridSim:
         return min(1.0, max(0.35, value))
 
     def travel_time(self, origin: LatLon, dest: LatLon, *, emergency: bool) -> tuple[float, float]:
-        """Estimate route time with Dijkstra using current edge congestion."""
-        start, end = self._node(origin), self._node(dest)
-        if start == end:
-            return 0.0, 0.0
-        for a, b, data in self.graph.edges(data=True):
-            speed_factor = 1.3 * (1.2 if emergency and self.cleared_corridors else 1.0) if emergency else 1.0
-            data["weight"] = data["length"] / (13.9 * self._congestion(data) * speed_factor)
-        path = nx.shortest_path(self.graph, start, end, weight="weight")
-        seconds = sum(self.graph.edges[a, b]["weight"] for a, b in itertools.pairwise(path))
-        return seconds, (len(path) - 1) * self.block_m
+        """Estimate congestion-aware route time and distance using A*."""
+        result = self.routes.route(origin, dest, emergency=emergency)
+        return result.eta_s, result.distance_m
 
     def set_corridor_cleared(self, unit_id: str, cleared: bool) -> None:
         """Track police corridor clearance while its unit is en route."""
@@ -80,7 +75,7 @@ class GridSim:
     def dispatch_unit(self, unit_id: str, dest: LatLon, *, emergency: bool) -> None:
         """Start unit movement toward a snapped destination."""
         origin = self.unit_position(unit_id)
-        path = nx.shortest_path(self.graph, self._node(origin), self._node(dest), weight="length")
+        path = self.routes.route(origin, dest, emergency=emergency).path
         self.vehicles[unit_id] = {"path": path, "index": 0, "elapsed": 0.0, "duration": self.travel_time(origin, dest, emergency=emergency)[0], "start": origin, "end": dest}
 
     def step(self, dt: float = 1.0) -> None:
@@ -90,7 +85,7 @@ class GridSim:
             vehicle["elapsed"] = min(float(vehicle["duration"]), float(vehicle["elapsed"]) + dt)
 
     def unit_position(self, unit_id: str) -> LatLon:
-        """Return interpolated position along the active Dijkstra path."""
+        """Return interpolated position along the active A* path."""
         vehicle = self.vehicles.get(unit_id)
         if vehicle is None:
             return self._coordinate((0, 0))
@@ -118,6 +113,15 @@ class GridSim:
         for a, b, data in self.graph.edges(data=True):
             result.append(EdgeState(id=str(data["id"]), geometry=[self._coordinate(a), self._coordinate(b)], congestion=self._congestion(data)))
         return result
+
+    def road_network_snapshot(self) -> GridRoadNetwork:
+        """Export connected intersections and edges in grid-unit coordinates."""
+        nodes = {node: GridNode(id=f'n_{node[0]}_{node[1]}', x=float(node[1]), y=float(node[0])) for node in self.graph.nodes}
+        edges = []
+        for a, b, data in self.graph.edges(data=True):
+            start, end = nodes[a], nodes[b]
+            edges.append(GridEdge(id=str(data['id']), from_node=start.id, to_node=end.id, x1=start.x, y1=start.y, x2=end.x, y2=end.y, congestion=self._congestion(data)))
+        return GridRoadNetwork(size=self.size, origin_lat=self.origin.lat, origin_lon=self.origin.lon, block_m=self.block_m, nodes=list(nodes.values()), edges=edges)
 
     def mean_traffic_delay(self) -> float:
         """Estimate mean extra travel time per road edge against free flow."""
