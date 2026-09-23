@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Coord, GridEdge, GridNode, GridRoadNetwork, Snapshot } from './types';
 
-type Props = { snapshot: Snapshot | null };
+type Props = { snapshot: Snapshot | null; baseNetwork?: GridRoadNetwork | null };
 type Point = { x: number; y: number };
 const invalidLogged = new Set<string>();
 const paddingPx = 18;
@@ -37,10 +37,10 @@ function shapePath(point: Point, radius: number): string {
   return `M ${point.x} ${point.y - radius} L ${point.x + radius} ${point.y} L ${point.x} ${point.y + radius} L ${point.x - radius} ${point.y} Z`;
 }
 
-export default function GridMap({ snapshot }: Props) {
+export default function GridMap({ snapshot, baseNetwork = null }: Props) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const network = snapshot?.road_network;
+  const network = snapshot?.road_network ?? baseNetwork;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -54,9 +54,8 @@ export default function GridMap({ snapshot }: Props) {
   }, []);
 
   const valid = useMemo(() => {
-    if (!snapshot) return { nodes: [] as GridNode[], edges: [] as GridEdge[] };
     if (!network) {
-      reportInvalid('road_network', 'network payload is missing');
+      if (snapshot) reportInvalid('road_network', 'network payload is missing');
       return { nodes: [] as GridNode[], edges: [] as GridEdge[] };
     }
     const nodes = network.nodes.filter(node => {
@@ -95,6 +94,7 @@ export default function GridMap({ snapshot }: Props) {
   const locationPoint = (coord: Coord, id: string) => network ? gridPosition(coord, network, id) : null;
 
   return <div className="map-canvas" ref={canvasRef}>
+    {!network && <p className="map-empty">Loading GridSim road network…</p>}
     <svg className="grid-map" viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="GridSim road network">
       <rect x={viewX} y={viewY} width={viewWidth} height={viewHeight} fill="var(--surface)" />
       {valid.edges.map(edge => <line key={edge.id} x1={edge.x1} y1={edge.y1} x2={edge.x2} y2={edge.y2} stroke="var(--road)" strokeWidth={strokeWidth} />)}

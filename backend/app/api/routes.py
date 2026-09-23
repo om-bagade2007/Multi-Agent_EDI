@@ -11,6 +11,7 @@ from app.api.ws import send_snapshot
 from app.config import Settings
 from app.core.bus import InMemoryBus, RedisStreamsBus
 from app.db.repository import Repository
+from app.sim.grid_sim import GridSim
 from app.sim.manager import SimulationManager
 from app.strategies.registry import STRATEGIES
 
@@ -25,6 +26,12 @@ _settings = Settings()
 def scenario() -> dict[str, object]:
     """Return default scenario metadata."""
     return {"name": "Pune grid", "grid_size": 8, "mode": "gridsim", "dispatch_strategy": _settings.dispatch_strategy, "incident_rate_per_minute": 2/3, "duration_s": 3600}
+
+
+@router.get("/scenario/network")
+def scenario_network() -> dict[str, object]:
+    """Provide the static GridSim road network before a run is started."""
+    return GridSim().road_network_snapshot().model_dump(mode="json")
 
 
 @router.get("/experiments/latest")

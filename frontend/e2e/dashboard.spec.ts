@@ -7,6 +7,7 @@ test('map grid fits the dashboard at desktop widths', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Emergency Response Simulation' })).toBeVisible();
   await expect(page.getByLabel('Strategy')).toContainText('Nearest resource');
+  await expect(page.locator('.grid-map line')).toHaveCount(112, { timeout: 10000 });
   await page.getByRole('button', { name: 'Start', exact: true }).click();
   await expect(page.locator('.grid-map line')).toHaveCount(112, { timeout: 20000 });
   const overflow1280 = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);

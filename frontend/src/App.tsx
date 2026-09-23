@@ -3,7 +3,7 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Too
 import GridMap from './GridMap';
 import { assertNoGridTiles } from './lib/mapMode';
 import { useRunSocket } from './hooks/useRunSocket';
-import type { Comparison, Decision } from './types';
+import type { Comparison, Decision, GridRoadNetwork } from './types';
 
 assertNoGridTiles(import.meta.env.VITE_SIMULATION_MODE ?? 'gridsim', []);
 
@@ -14,6 +14,7 @@ export default function App() {
   const [speed, setSpeed] = useState(1);
   const [strategy, setStrategy] = useState('nearest');
   const [comparison, setComparison] = useState<Comparison | null>(null);
+  const [baseNetwork, setBaseNetwork] = useState<GridRoadNetwork | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Decision | null>(null);
@@ -31,6 +32,8 @@ export default function App() {
   }, []);
 
   useEffect(() => { void fetch('http://localhost:8000/scenario').then(response => response.ok ? response.json() : null).then(data => { if (data?.dispatch_strategy) setStrategy(data.dispatch_strategy as string); }).catch(() => undefined); }, []);
+
+  useEffect(() => { void fetch('http://localhost:8000/scenario/network').then(response => response.ok ? response.json() : null).then(data => setBaseNetwork(data as GridRoadNetwork | null)).catch(() => setBaseNetwork(null)); }, []);
 
   async function start() {
     try {
@@ -94,7 +97,7 @@ export default function App() {
     <section className="grid">
       <article className="map">
         <h2>Live City Map</h2>
-        <GridMap snapshot={snapshot} />
+        <GridMap snapshot={snapshot} baseNetwork={baseNetwork} />
       </article>
       <aside>
         <article><h2>Response Agents</h2>{['ambulance', 'fire', 'police'].map(kind => <div className="agent-card" key={kind}><div className="resource"><span>{kind}</span><b>{snapshot?.agents[kind]?.idle ?? units.filter(unit => unit.kind === kind && unit.status === 'idle').length} idle</b><small>{snapshot?.agents[kind]?.busy ?? units.filter(unit => unit.kind === kind && unit.status !== 'idle').length} busy</small></div><p>{snapshot?.agents[kind]?.last_action ?? 'Standing by'}</p></div>)}<div className="agent-card"><div className="resource"><span>hospital</span><b>{snapshot?.agents.hospital?.beds_free ?? 65} beds</b><small>{snapshot?.agents.hospital?.icu_free ?? 15} ICU</small></div><p>{snapshot?.agents.hospital?.last_action ?? 'Standing by'}</p></div></article>

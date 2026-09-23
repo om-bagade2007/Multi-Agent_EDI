@@ -32,3 +32,8 @@
 - Fix: WebSocket snapshots now include Pydantic-validated grid-unit nodes and edges with explicit endpoints. The SVG reads those endpoints, computes one aspect-preserving scale from node bounds, measures its container with `ResizeObserver`, and uses the same grid transform for entity markers. Invalid records are skipped with one console error per id. CSS gives cards and toolbar children shrinkable widths, wraps controls, and provides a 200px Strategy selector.
 - Assumption: geographic markers are rounded to the nearest in-bounds GridSim intersection, matching `GridSim._node`, so units and incidents remain aligned to the synthetic street network.
 - Playwright verified no horizontal overflow at 1280×800 and 1920×1080 and saved the visual baseline at `docs/screenshots/map-fixed.png`.
+
+## Startup Map Visibility
+
+- The initial blank map had two causes: the dashboard only received a road network in the active-run WebSocket, and `GridMap` returned empty geometry whenever its simulation snapshot was null—even if the static road network had loaded. A new `/scenario/network` endpoint supplies the default grid on page load, and the renderer now uses that network until a live snapshot replaces it.
+- MapLibre is not used for the default GridSim view because it models a synthetic grid, not real geographic streets. A real-city basemap should only be enabled with a real, aligned SUMO/OSM network.

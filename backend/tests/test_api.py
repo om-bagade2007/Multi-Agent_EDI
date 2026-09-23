@@ -12,6 +12,8 @@ def test_api_live_run_controls_and_snapshot() -> None:
     scenario = client.get("/scenario").json()
     assert scenario["grid_size"] == 8
     assert scenario["mode"] == "gridsim" and scenario["dispatch_strategy"] == "nearest"
+    base_network = client.get("/scenario/network").json()
+    assert len(base_network["nodes"]) == 64 and len(base_network["edges"]) == 112
     response = client.post("/runs", json={"seed": 1, "duration_s": 3600, "incident_rate": 5})
     assert response.status_code == 200
     run_id = response.json()["id"]
