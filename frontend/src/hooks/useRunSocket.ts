@@ -9,7 +9,8 @@ export function useRunSocket(runId: string | null) {
     let retry: number;
     let disposed = false;
     const connect = () => {
-      socket = new WebSocket(`ws://${location.hostname}:8000/ws/runs/${runId}`);
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${protocol}//${location.host}/ws/runs/${runId}`);
       socket.onmessage = event => dispatch(JSON.parse(event.data) as Message);
       socket.onclose = () => { if (!disposed) retry = window.setTimeout(connect, 1000); };
     };

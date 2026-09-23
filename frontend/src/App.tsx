@@ -25,42 +25,45 @@ export default function App() {
   }, [snapshot]);
 
   useEffect(() => {
-    const refresh = () => { void fetch('http://localhost:8000/experiments/latest').then(response => response.ok ? response.json() : null).then(data => setComparison(data as Comparison | null)).catch(() => setComparison(null)); };
+    const refresh = () => { void fetch('/api/experiments/latest').then(response => response.ok ? response.json() : null).then(data => setComparison(data as Comparison | null)).catch(() => setComparison(null)); };
     refresh();
     const timer = window.setInterval(refresh, 10000);
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => { void fetch('http://localhost:8000/scenario').then(response => response.ok ? response.json() : null).then(data => { if (data?.dispatch_strategy) setStrategy(data.dispatch_strategy as string); }).catch(() => undefined); }, []);
+  useEffect(() => { void fetch('/api/scenario').then(response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }).then(data => { if (data?.dispatch_strategy) setStrategy(data.dispatch_strategy as string); }).catch(() => setError('Simulation API is unavailable. Start the backend server; see the README run instructions.')); }, []);
 
-  useEffect(() => { void fetch('http://localhost:8000/scenario/network').then(response => response.ok ? response.json() : null).then(data => setBaseNetwork(data as GridRoadNetwork | null)).catch(() => setBaseNetwork(null)); }, []);
+  useEffect(() => { void fetch('/api/scenario/network').then(response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }).then(data => setBaseNetwork(data as GridRoadNetwork)).catch(() => { setBaseNetwork(null); setError('Simulation API is unavailable. Start the backend server; see the README run instructions.'); }); }, []);
 
   async function start() {
     try {
       setError(null);
-      const response = await fetch('http://localhost:8000/runs', {
+      const response = await fetch('/api/runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seed, incident_rate: rate, duration_s: 3600, speed, strategy }),
       });
-      if (!response.ok) throw new Error((await response.json() as { detail?: string }).detail ?? 'Could not start run');
+      if (!response.ok) {
+        if (response.status >= 500) throw new Error('Simulation API is unavailable. Start the backend server; see the README run instructions.');
+        throw new Error((await response.json() as { detail?: string }).detail ?? 'Could not start run');
+      }
       const data = await response.json() as { id: string };
       setRunId(data.id);
       setSelected(null);
       setBusy(true);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not start run');
+      setError(cause instanceof TypeError ? 'Cannot reach the simulation API. Start the backend server; see the README run instructions.' : cause instanceof Error ? cause.message : 'Could not start run');
     }
   }
 
   async function control(action: string) {
     if (!runId) return;
     try {
-      const response = await fetch(`http://localhost:8000/runs/${runId}/${action}`, { method: 'POST' });
-      if (!response.ok) throw new Error('Run control failed');
+      const response = await fetch(`/api/runs/${runId}/${action}`, { method: 'POST' });
+      if (!response.ok) throw new Error(response.status >= 500 ? 'Simulation API is unavailable. Start the backend server; see the README run instructions.' : 'Run control failed');
       if (action === 'stop') setBusy(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Run control failed');
+      setError(cause instanceof TypeError ? 'Cannot reach the simulation API. Start the backend server; see the README run instructions.' : cause instanceof Error ? cause.message : 'Run control failed');
     }
   }
 

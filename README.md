@@ -60,10 +60,10 @@ Start the frontend in a second terminal:
 
 ```sh
 cd frontend
-npm run dev -- --host 127.0.0.1
+npm run dev -- --host 0.0.0.0
 ```
 
-Open [http://localhost:5173](http://localhost:5173). The vector street grid appears immediately; press **Start** to stream live units, incidents, traffic, and metrics. Press **Stop** before switching dispatch strategy. Both services run on your own computer.
+Open [http://localhost:5173](http://localhost:5173) on the same computer. The vector street grid appears immediately; press **Start** to stream live units, incidents, traffic, and metrics. Press **Stop** before switching dispatch strategy. The frontend proxies API and WebSocket requests to the backend, avoiding browser CORS errors. For another computer on the same trusted LAN, open `http://<server-LAN-IP>:5173`; keep both servers running on the server computer and allow port 5173 through its firewall for the private network.
 
 For a one-command local demo, run `python scripts/demo.py` from the repository root. It starts both servers and opens the browser; press Ctrl+C in that terminal to stop them.
 

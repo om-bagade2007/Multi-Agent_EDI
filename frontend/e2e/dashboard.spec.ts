@@ -3,10 +3,14 @@ import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 test('map grid fits the dashboard at desktop widths', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.setViewportSize({ width: 775, height: 900 });
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Emergency Response Simulation' })).toBeVisible();
   await expect(page.getByLabel('Strategy')).toContainText('Nearest resource');
+  await expect(page.locator('.grid-map line')).toHaveCount(112, { timeout: 10000 });
+  const overflow775 = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+  expect(overflow775).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 800 });
   await expect(page.locator('.grid-map line')).toHaveCount(112, { timeout: 10000 });
   await page.getByRole('button', { name: 'Start', exact: true }).click();
   await expect(page.locator('.grid-map line')).toHaveCount(112, { timeout: 20000 });
