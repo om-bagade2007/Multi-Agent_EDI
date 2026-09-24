@@ -91,3 +91,18 @@ class PuneNetwork:
         """Choose the fastest stored parallel road segment for an endpoint pair."""
         options = self.graph.get_edge_data(source, target)
         return min(options.values(), key=lambda edge: edge["travel_time_s"])
+
+    def nearest_road_distance_m(self, lon: float, lat: float) -> float:
+        """Return the local projected distance from a point to any drawn road segment."""
+        scale_x = 111_320 * math.cos(math.radians(lat))
+        best = math.inf
+        for feature in self.roads["features"]:
+            coordinates = feature["geometry"]["coordinates"]
+            for (ax, ay), (bx, by) in zip(coordinates, coordinates[1:]):
+                px, py = (lon - ax) * scale_x, (lat - ay) * 111_320
+                vx, vy = (bx - ax) * scale_x, (by - ay) * 111_320
+                fraction = max(0.0, min(1.0, (px * vx + py * vy) / max(.000001, vx * vx + vy * vy)))
+                best = min(best, math.hypot(px - vx * fraction, py - vy * fraction))
+                if best < 1:
+                    return best
+        return best

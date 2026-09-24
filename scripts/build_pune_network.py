@@ -10,8 +10,6 @@ import sys
 import shutil
 
 import networkx as nx
-import osmnx as ox
-import requests
 
 BBOX = (18.47, 18.58, 73.79, 73.93)  # south, north, west, east
 CLASSES = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary", "secondary_link", "tertiary", "tertiary_link"}
@@ -43,7 +41,7 @@ def distance_m(lon_a: float, lat_a: float, lon_b: float, lat_b: float) -> float:
     return 2 * radius * math.asin(math.sqrt(arc))
 
 
-def graph_from_osm(bbox: tuple[float, float, float, float]) -> nx.MultiDiGraph:
+def graph_from_osm(bbox: tuple[float, float, float, float], ox) -> nx.MultiDiGraph:
     """Try the primary Overpass endpoint and mirrors, then an OSMnx extract cache."""
     cache = DATA_DIR / "cache"
     cache.mkdir(parents=True, exist_ok=True)
@@ -59,7 +57,7 @@ def graph_from_osm(bbox: tuple[float, float, float, float]) -> nx.MultiDiGraph:
             graph_path = cache / "pune_drive.graphml"
             ox.save_graphml(graph, filepath=graph_path)
             return graph
-        except (requests.RequestException, Exception) as error:
+        except Exception as error:  # noqa: BLE001 - retry each mirror for every Overpass failure
             failures.append(f"{endpoint}: {error}")
     cached = cache / "pune_drive.graphml.gz"
     if cached.exists():
@@ -82,9 +80,13 @@ def main() -> None:
             return
         except (ImportError, OSError, ValueError, KeyError, TypeError) as error:
             print(f"Existing Pune outputs are incomplete or invalid; rebuilding: {error}")
+    try:
+        import osmnx as ox
+    except ImportError as error:
+        raise SystemExit("Pune data needs rebuilding, but OSMnx is not installed. Run `python -m pip install -e 'backend[dev]'` first.") from error
     south, north, west, east = BBOX
     bbox = (west, south, east, north)
-    graph = graph_from_osm(bbox)
+    graph = graph_from_osm(bbox, ox)
     raw_cache = DATA_DIR / "cache" / "pune_drive.graphml"
     compact_cache = DATA_DIR / "cache" / "pune_drive.graphml.gz"
     if raw_cache.exists():

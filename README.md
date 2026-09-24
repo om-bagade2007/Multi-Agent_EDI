@@ -44,7 +44,7 @@ cd frontend && npm ci && cd ..
 
 1. In the repository root, activate the Python environment and run `make pune-data` (or `python scripts/build_pune_network.py`); existing committed data is validated locally.
 2. Run `make demo` (or `python scripts/demo.py`) to validate the data, start the Pune backend and frontend, and open the browser.
-3. Open [http://localhost:5173](http://localhost:5173) if it did not open automatically; press **Start** to launch a run.
+3. If needed, open the URL printed by the launcher (normally [http://localhost:5173](http://localhost:5173)); press **Start** to launch a run.
 4. Choose a dispatch strategy and speed, and watch the real road routes, incidents, response units, and metrics update.
 5. Press Ctrl+C in the demo terminal to stop both servers; use `docker compose up --build` for the containerized version.
 

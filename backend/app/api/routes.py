@@ -66,6 +66,21 @@ def scenario_facilities() -> list[dict[str, object]]:
     return [{key: poi[key] for key in ("id", "kind", "name", "lat", "lon")} for poi in network.data["pois"]]
 
 
+@router.get("/scenario/regions")
+def scenario_regions() -> dict[str, object]:
+    """Return optional offline region geometry without blocking the dashboard."""
+    if _settings.simulation_mode.lower() != "pune":
+        return {"available": False}
+    path = _settings.pune_data_dir / "regions.geojson"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("type") != "FeatureCollection" or not isinstance(data.get("features"), list):
+            return {"available": False}
+        return {"available": True, **data}
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+        return {"available": False}
+
+
 @router.get("/experiments/latest")
 def latest_comparison() -> dict[str, object] | None:
     """Return the latest paired comparison, if one was exported."""

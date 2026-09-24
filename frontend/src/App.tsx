@@ -4,7 +4,7 @@ import PuneMap from './PuneMap';
 import { parseFacilities } from './mapPayload';
 import { assertNoGridTiles } from './lib/mapMode';
 import { useRunSocket } from './hooks/useRunSocket';
-import type { Comparison, Decision, Facility, GridRoadNetwork, PuneNetwork } from './types';
+import type { Comparison, Decision, Facility, GridRoadNetwork, PuneNetwork, PuneRegions } from './types';
 
 const GridMap = lazy(() => import('./dev/GridMap'));
 assertNoGridTiles(import.meta.env.VITE_SIMULATION_MODE ?? 'pune', []);
@@ -23,6 +23,8 @@ export default function App() {
   const [baseNetwork, setBaseNetwork] = useState<GridRoadNetwork | null>(null);
   const [puneNetwork, setPuneNetwork] = useState<PuneNetwork | null>(null);
   const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [regions, setRegions] = useState<PuneRegions>({ available: false });
+  const [showRegions, setShowRegions] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Decision | null>(null);
@@ -70,6 +72,7 @@ export default function App() {
           throw new Error(detail.detail ?? `Facilities service returned HTTP ${facilitiesResponse.status}`);
         }
         setFacilities(parseFacilities(await facilitiesResponse.json(), (networkData as PuneNetwork).bbox));
+        void fetch('/api/scenario/regions').then(response => response.ok ? response.json() as Promise<PuneRegions> : { available: false } as PuneRegions).then(data => setRegions(data)).catch(() => setRegions({ available: false }));
       } else {
         setBaseNetwork(networkData as GridRoadNetwork);
       }
@@ -105,7 +108,7 @@ export default function App() {
     try {
       const response = await fetch(`/api/runs/${runId}/${action}`, { method: 'POST' });
       if (!response.ok) throw new Error(response.status >= 500 ? 'Simulation API is unavailable. Start the backend server; see the README run instructions.' : 'Run control failed');
-      if (action === 'stop') setBusy(false);
+      if (action === 'stop') { setBusy(false); setRunId(null); }
     } catch (cause) {
       setError(cause instanceof TypeError ? 'Cannot reach the simulation API. Start the backend server; see the README run instructions.' : cause instanceof Error ? cause.message : 'Run control failed');
     }
@@ -145,9 +148,9 @@ export default function App() {
       <article className="map">
         <h2>{mode === 'pune' ? 'Pune live map' : 'Live City Map'}</h2>
         {mode === 'pune'
-          ? puneNetwork ? <PuneMap network={puneNetwork} facilities={facilities} snapshot={snapshot} /> : <p className="map-empty">Loading Pune roads and facilities…</p>
+          ? puneNetwork ? <PuneMap network={puneNetwork} facilities={facilities} snapshot={runId ? snapshot : null} regions={regions} showRegions={showRegions} /> : <p className="map-empty">Loading Pune roads and facilities…</p>
           : <Suspense fallback={<p className="map-empty">Loading developer map…</p>}><GridMap snapshot={snapshot} baseNetwork={baseNetwork} /></Suspense>}
-        {mode === 'pune' && <><div className="map-legend"><span><i className="legend-square hospital-legend" />Hospital</span><span><i className="legend-square fire-legend" />Fire station</span><span><i className="legend-square police-legend" />Police station</span><span><i className="legend-diamond" />Incident</span><span><i className="legend-dot" />Response unit</span></div><small className="map-attribution">© OpenStreetMap contributors © CARTO</small></>}
+        {mode === 'pune' && <><div className="map-legend"><span><i className="legend-square hospital-legend" />Hospital</span><span><i className="legend-square fire-legend" />Fire station</span><span><i className="legend-square police-legend" />Police station</span><span><i className="legend-diamond" />Incident</span><span><i className="legend-dot" />Response unit</span><label className="regions-toggle"><input aria-label="Regions" type="checkbox" checked={showRegions} onChange={event => setShowRegions(event.target.checked)} />Regions</label></div><small className="map-attribution">{(import.meta.env.VITE_BASEMAP ?? 'carto-light') === 'osm' ? '© OpenStreetMap contributors' : '© OpenStreetMap contributors © CARTO'}</small></>}
       </article>
       <aside>
         <article><h2>Response Agents</h2>{['ambulance', 'fire', 'police'].map(kind => <div className="agent-card" key={kind}><div className="resource"><span>{kind}</span><b>{snapshot?.agents[kind]?.idle ?? units.filter(unit => unit.kind === kind && unit.status === 'idle').length} idle</b><small>{snapshot?.agents[kind]?.busy ?? units.filter(unit => unit.kind === kind && unit.status !== 'idle').length} busy</small></div><p>{snapshot?.agents[kind]?.last_action ?? 'Standing by'}</p></div>)}<div className="agent-card"><div className="resource"><span>hospital</span><b>{snapshot?.agents.hospital?.beds_free ?? 65} beds</b><small>{snapshot?.agents.hospital?.icu_free ?? 15} ICU</small></div><p>{snapshot?.agents.hospital?.last_action ?? 'Standing by'}</p></div></article>

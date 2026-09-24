@@ -5,8 +5,11 @@ from pathlib import Path
 import networkx as nx
 import numpy as np
 import pytest
+from fastapi.testclient import TestClient
 
+from app.api import routes as api_routes
 from app.core.models import AgentKind, Incident, IncidentType, LatLon, Unit
+from app.main import create_app
 from app.sim.manager import SimulationManager
 from app.sim.pune_network import PuneNetwork
 from app.sim.pune_sim import PuneSim
@@ -88,3 +91,20 @@ def test_pune_metrics_are_deterministic_for_same_seed() -> None:
         return first, second
     first, second = asyncio.run(run())
     assert first["metrics"] == second["metrics"]
+
+
+def test_two_hundred_seeded_incidents_land_on_network_roads(network: PuneNetwork) -> None:
+    first_sim, second_sim = PuneSim(DATA), PuneSim(DATA)
+    first_rng, second_rng = np.random.default_rng(814), np.random.default_rng(814)
+    first = [first_sim.sample_location(first_rng) for _ in range(200)]
+    second = [second_sim.sample_location(second_rng) for _ in range(200)]
+    assert first == second
+    assert all(network.nearest_road_distance_m(point.lon, point.lat) <= 5 for point in first)
+
+
+def test_regions_endpoint_returns_unavailable_when_optional_file_is_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(api_routes._settings, "simulation_mode", "pune")
+    monkeypatch.setattr(api_routes._settings, "pune_data_dir", tmp_path)
+    response = TestClient(create_app()).get("/scenario/regions")
+    assert response.status_code == 200
+    assert response.json() == {"available": False}

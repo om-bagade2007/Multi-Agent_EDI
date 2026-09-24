@@ -3,6 +3,7 @@ export type GridNode = { id: string; x: number; y: number };
 export type GridEdge = { id: string; from_node: string; to_node: string; x1: number; y1: number; x2: number; y2: number; congestion: number };
 export type GridRoadNetwork = { size: number; origin_lat: number; origin_lon: number; block_m: number; nodes: GridNode[]; edges: GridEdge[] };
 export type PuneNetwork = { mode: 'pune'; bbox: { south: number; north: number; west: number; east: number }; roads: { type: 'FeatureCollection'; features: { type: 'Feature'; id: string; properties: { road_class: string }; geometry: { type: 'LineString'; coordinates: [number, number][] } }[] } };
+export type PuneRegions = { available: true; type: 'FeatureCollection'; features: { type: 'Feature'; id?: string; properties: { name?: string; kind?: string }; geometry: { type: string; coordinates: unknown } }[] } | { available: false };
 export type Network = ({ mode: 'gridsim' } & GridRoadNetwork) | PuneNetwork;
 export type Facility = { id: string; kind: 'hospital' | 'fire_station' | 'police'; name: string; lat: number; lon: number };
 export type Unit = { id: string; kind: string; location: Coord; status: string; assigned_incident_id: string | null };

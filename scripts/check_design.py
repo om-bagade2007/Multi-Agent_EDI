@@ -35,7 +35,7 @@ if re.search(r'react-map-gl|maplibre-gl|leaflet|<Marker\b|L\.marker|marker-icon'
     errors.append('default map-library markers or tile map imports are forbidden in GridSim')
 if 'assertNoGridTiles' not in source or 'GridSim cannot use basemap tiles' not in (ROOT / 'frontend/src/lib/mapMode.ts').read_text(encoding='utf-8'):
     errors.append('GridSim startup tile-source guard is missing')
-if "from 'maplibre-gl'" not in pune_map or 'https://basemaps.cartocdn.com/light_all/' not in pune_map:
+if "from 'maplibre-gl'" not in pune_map or 'basemaps.cartocdn.com' not in pune_map or 'light_nolabels' not in pune_map:
     errors.append('Pune map must use MapLibre and the contracted CARTO light tiles')
 if re.search(r'https?://[^\s"\']+\.(?:png|jpg|jpeg|webp)(?:\?[^"\']*)?', grid_source, re.I) or re.search(r'maplibre-gl|leaflet|cartocdn', grid_source, re.I):
     errors.append('GridSim developer map must not use tiles or map libraries')

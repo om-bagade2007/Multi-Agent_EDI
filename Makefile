@@ -24,6 +24,7 @@ down:
 	docker compose down
 pune-data:
 	python scripts/build_pune_network.py
+	python scripts/build_pune_regions.py
 doctor:
 	python scripts/doctor.py
 compare-pune:
